@@ -9,13 +9,14 @@ Included is python embedded (3.10.5) for use on Windows PCs without having to in
 refuse to have a Linux system installed on their network.
 
 ### Dependencies
-*Only needed if install on Linux, as the embedded python package will have the dependencies included.
+*Only needed if installed on Linux, as the embedded python package will have the dependencies included.
 
 - [pylogix](https://github.com/dmroeder/pylogix) - for Allen-Bradley PLC Communications
 
 ```console
 python -m pip install pylogix
 ```
+
 
 - [Reqeusts](https://github.com/psf/requests) - For REST API calls to Thingworx.
 
