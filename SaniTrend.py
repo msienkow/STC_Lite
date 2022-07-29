@@ -1,6 +1,9 @@
 from pylogix import PLC
 import stc_lite
 
-thingworx_connectivity = stc_lite.ThingworxConnectivity()
-thingworx_connectivity.get_twx_connection_status()
-print(thingworx_connectivity.twx_connected)
+import time
+stc_plc = stc_lite.SaniTrendPLC()
+while True:
+    if stc_plc.plc_timer():
+        print("gotcha")
+    time.sleep(.5)

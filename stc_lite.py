@@ -13,37 +13,29 @@ import time
 
 
 
+class TimerResponse():
+    def __init__(self, entered_time: int = 0, preset: int = 0):
+        self.ACC = 0
+        self.DN = False
+        self.timestamp = 0
+        self._simple_timer(entered_time, preset)
+    
+    def _simple_timer(self,entered_time, preset) -> None:
+        """Allen-Bradley PLC Timer replica
 
-def get_ms_time() -> int:
-    """Simple function to get current time in milliseconds. Useful for time comparisons\n
-        ex.\n
-          start_time = get_ms_time()\n
-          end_time = get_ms_time()\n
-          total_millisecond_difference = (end_time - start_time)
+        Args:
+            entered_time (int, optional): timestamp in milliseconds. Defaults to 0.
+            preset (int, optional): preset in milliseconds. Defaults to 0.
 
-    Returns:
-        integer: current epoch in milliseconds
-    """
-    return int(round(time.time() * 1000))
-
-
-
-
-def ms_time_compare(ms_time: int = 0, preset: int = 0) -> bool:
-    """Millisecond Time Compare\n
-    Simple time compare that gets current time stamp in\n 
-    milliseconds, then subtracts the millisecond time input\n
-    by user and compares the result to the preset
-
-    Args:
-        ms_time (int, optional): timestamp (in milliseconds) to compare to current time. Defaults to 0.
-        preset (int, optional): preset setpoint (in milliseconds) that the current time must be after the compare time. Defaults to 0.
-
-    Returns:
-        bool: True/False - Current millisecond time - compare millisecond time >= millisecond preset
-    """
-    return True if (get_ms_time() - ms_time) >= preset else False
-
+        Returns:
+            None: 
+        """
+        current_datetime = int(round(time.time() * 1000))
+        time_elapsed = current_datetime - entered_time
+        self.ACC = time_elapsed
+        self.timestamp = current_datetime
+        self.DN = True if time_elapsed >= preset else False
+            
 
 
 
@@ -104,8 +96,8 @@ class SaniTrendLogging:
             message (str): data to be logged
         """
         self.stc_data_logger.info(message)
-
-
+# Initialize the Logger
+SaniTrend_Logger = SaniTrendLogging()
 
 
 
@@ -119,6 +111,7 @@ class SaniTrendDatabase:
 
 
 
+
 @dataclass
 class SaniTrendPLC:
     """PLC communication class
@@ -126,31 +119,42 @@ class SaniTrendPLC:
     plc_ipaddress: str = ''
     plc_path: str = ''
     plc_scan_rate: int = 1000
-    _plc_last_scan_time: int = 0
+    tags: list = field(default_factory=list)
+    tag_data: list = field(default_factory=list)
+    virtual_analog_input_tag: str = ''
+    virtual_digital_input_tag: str = ''
+    virtual_string_tag: str = ''
+    virtual_analog_inputs_enable: bool = False
+    virtual_digital_inputs_enable: bool = False
+    virtual_string_input_enable: bool = False
+    virtual_tag_config: list = field(default_factory=list)
+    _plc_last_scan_time = 0
 
-    def plc_scan_timer(self, preset: int = 0) -> bool:
-        """Simple timer for determining when to scan PLC for data
-
-        Args:
-            preset (int, optional): _description_. Defaults to 0.
+    def plc_timer(self,) -> bool:
+        """Timer object for PLC scan
 
         Returns:
-            bool: _description_
+            TimerResponse: done bit, current timestamp(ms), accumulator(ms)
         """
-        preset = self.plc_scan_rate if preset == 0 else preset
-        time_elapsed = get_ms_time() - self._plc_last_scan_time
-        if time_elapsed > preset:
-            return True
-        else:
-            return False
+        timer = TimerResponse(self._plc_last_scan_time, self.plc_scan_rate)
+        if timer.DN:
+            self._plc_last_scan_time = timer.timestamp
+        return timer.DN
+
+
 
 
 @dataclass
-class ThingworxConnectivity:
+class Thingworx:
     """Thingworx connectivity class
     """
+    headers = {
+        'Connection': 'keep-alive',
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+    }
     twx_connected: bool = False
-    _connection_status_session = requests.Session()
+    thingworx_session = requests.Session()
     _twx_last_connection_test: int = 0
     _twx_conn_test_in_progress: bool = False
 
@@ -172,15 +176,12 @@ class ThingworxConnectivity:
         """Threaded function for Thingworx connectivity check
         """
         url = 'http://localhost:8000/Thingworx/Things/LocalEms/Properties/isConnected'
-        headers = {
-            'Connection': 'keep-alive',
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-        }
+        
         try:
-            connection_response = self._connection_status_session.get(url, headers=headers, timeout=30)
+            connection_response = self._connection_status_session.get(url, headers=self.headers, timeout=30)
             if  connection_response.status_code == 200:
                 self.twx_connected = (connection_response.json())['rows'][0]['isConnected']
+
             else:
                 SaniTrend_Logger.log_error(__name__, connection_response)
                 self.twx_connected = False
@@ -194,7 +195,7 @@ class ThingworxConnectivity:
         
         
 @dataclass
-class SaniTrendCloud(SaniTrendDatabase, SaniTrendPLC):
+class SaniTrendCloud(SaniTrendDatabase, Thingworx, SaniTrendPLC):
     """Set up initial SaniTrend™ Cloud class that will hold all the data in memory that is needed.
     """
     
@@ -204,7 +205,7 @@ class SaniTrendCloud(SaniTrendDatabase, SaniTrendPLC):
     # twxData: list = field(default_factory=list)
     
 
-SaniTrend_Logger = SaniTrendLogging()
+
 
 
 def main():
