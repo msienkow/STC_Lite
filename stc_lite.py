@@ -6,6 +6,7 @@ from logging import handlers
 import math
 import os
 import platform
+from typing import Any
 import requests
 from sqlite3 import connect
 import threading
@@ -116,11 +117,13 @@ class SaniTrendDatabase:
 class SaniTrendPLC:
     """PLC communication class
     """
+    tags: list = field(default_factory=list)
+    tag_data: list = field(default_factory=list)
+    _plc_last_scan_time = 0
+
     plc_ipaddress: str = ''
     plc_path: str = ''
     plc_scan_rate: int = 1000
-    tags: list = field(default_factory=list)
-    tag_data: list = field(default_factory=list)
     virtual_analog_input_tag: str = ''
     virtual_digital_input_tag: str = ''
     virtual_string_tag: str = ''
@@ -128,8 +131,7 @@ class SaniTrendPLC:
     virtual_digital_inputs_enable: bool = False
     virtual_string_input_enable: bool = False
     virtual_tag_config: list = field(default_factory=list)
-    _plc_last_scan_time = 0
-
+    
     def plc_scan_timer(self,preset: int = plc_scan_rate) -> bool:
         """simple looping timer
 
@@ -144,58 +146,59 @@ class SaniTrendPLC:
             self._plc_last_scan_time = timer.timestamp
         return timer.DN
 
+    def get_tag_value(self, tagname: str) -> Any:
+        """Returns value of tagname given from current tag data
 
+        Args:
+            tagname (str): name of plc tag
+
+        Returns:
+            Any: current value of plc tag
+        """
+        values = (item.Value for item in self.tag_data if item.TagName == tagname)
+        for i in values:
+            i = round(i, 2) if isinstance(i, float) else i
+            return i
+        else:
+            return None
+
+    
 
 
 @dataclass
 class Thingworx:
-    """Thingworx connectivity class
+    """Thingworx class
     """
-    headers = {
+    http_headers = {
         'Connection': 'keep-alive',
         'Accept': 'application/json',
         'Content-Type': 'application/json'
     }
+
     twx_connected: bool = False
     thingworx_session = requests.Session()
     _twx_last_connection_test: int = 0
     _twx_conn_test_in_progress: bool = False
-    
-    def twx_conn_timer(self, preset: int = 4000) -> bool:
-        """simple looping timer
 
-        Args:
-            preset (int, optional): Timer preset in milliseconds. Defaults to 4000.
-
-        Returns:
-            bool: accumulated time >= timer preset
-        """
-        timer = TimerResponse(self._twx_last_connection_test, preset)
-        if timer.DN:
-            self._twx_last_connection_test = timer.timestamp
-        return timer.DN
-
-    def get_twx_connection_status(self, preset: int = 5) -> None:
+    def get_twx_connection_status(self, preset: int = 3525) -> None:
         """Threading wrapper function to check for Thingworx connectivity.
 
         Args:
-            preset (int, optional): Seconds to repeat check for connectivity. Defaults to 5.
+            preset (int, optional): Seconds to repeat check for connectivity. Defaults to 3525.
         """
-        if not self._twx_conn_test_in_progress:
-            current_ms_time = get_ms_time()
-            time_accumulated = current_ms_time - self._twx_last_connection_test
-            if time_accumulated > preset:
+        if not self._twx_conn_test_in_progress: 
+            timer = TimerResponse(self._twx_last_connection_test, preset)
+            if timer.DN:
                 self._twx_conn_test_in_progress = True
-                self._twx_last_connection_test = current_ms_time
+                self._twx_last_connection_test = timer.timestamp
                 threading.Thread(target=self._get_twx_connection_status).start()
 
     def _get_twx_connection_status(self,) -> None:
         """Threaded function for Thingworx connectivity check
         """
         url = 'http://localhost:8000/Thingworx/Things/LocalEms/Properties/isConnected'
-        
         try:
-            connection_response = self._connection_status_session.get(url, headers=self.headers, timeout=30)
+            connection_response = self._connection_status_session.get(url, headers=self.http_headers, timeout=30)
             if  connection_response.status_code == 200:
                 self.twx_connected = (connection_response.json())['rows'][0]['isConnected']
 
@@ -204,13 +207,16 @@ class Thingworx:
                 self.twx_connected = False
 
         except Exception as e:
+            SaniTrend_Logger.log_error(__name__, connection_response)
             self.twx_connected = False
-            self._twx_last_connection_test = get_ms_time() + 30000
+            self._twx_last_connection_test = self._twx_last_connection_test + 30000
 
         self._twx_conn_test_in_progress = False
 
+
         
         
+
 @dataclass
 class SaniTrendCloud(SaniTrendDatabase, Thingworx, SaniTrendPLC):
     """Set up initial SaniTrend™ Cloud class that will hold all the data in memory that is needed.
