@@ -130,13 +130,16 @@ class SaniTrendPLC:
     virtual_tag_config: list = field(default_factory=list)
     _plc_last_scan_time = 0
 
-    def plc_timer(self,) -> bool:
-        """Timer object for PLC scan
+    def plc_scan_timer(self,preset: int = plc_scan_rate) -> bool:
+        """simple looping timer
+
+        Args:
+            preset (int, optional): Timer preset in milliseconds. Defaults to plc_scan_rate.
 
         Returns:
-            TimerResponse: done bit, current timestamp(ms), accumulator(ms)
+            bool: accumulated time >= timer preset
         """
-        timer = TimerResponse(self._plc_last_scan_time, self.plc_scan_rate)
+        timer = TimerResponse(self._plc_last_scan_time, preset)
         if timer.DN:
             self._plc_last_scan_time = timer.timestamp
         return timer.DN
@@ -157,6 +160,20 @@ class Thingworx:
     thingworx_session = requests.Session()
     _twx_last_connection_test: int = 0
     _twx_conn_test_in_progress: bool = False
+    
+    def twx_conn_timer(self, preset: int = 4000) -> bool:
+        """simple looping timer
+
+        Args:
+            preset (int, optional): Timer preset in milliseconds. Defaults to 4000.
+
+        Returns:
+            bool: accumulated time >= timer preset
+        """
+        timer = TimerResponse(self._twx_last_connection_test, preset)
+        if timer.DN:
+            self._twx_last_connection_test = timer.timestamp
+        return timer.DN
 
     def get_twx_connection_status(self, preset: int = 5) -> None:
         """Threading wrapper function to check for Thingworx connectivity.

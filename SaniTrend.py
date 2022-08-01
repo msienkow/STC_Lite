@@ -4,6 +4,6 @@ import stc_lite
 import time
 stc_plc = stc_lite.SaniTrendPLC()
 while True:
-    if stc_plc.plc_timer():
+    if stc_plc.plc_scan_timer():
         print("gotcha")
     time.sleep(.5)
