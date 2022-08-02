@@ -7,6 +7,7 @@ from logging import handlers
 import math
 import os
 import platform
+from typing import Any
 import requests
 import sqlite3
 import sys
@@ -128,13 +129,15 @@ class SaniTrendPLC:
     virtual_digital_inputs_enable: bool = False
     virtual_string_input_enable: bool = False
     virtual_tag_config: list = field(default_factory=list)
-    _plc_last_scan_time = 0
+    
+    def plc_scan_timer(self,preset: int = plc_scan_rate) -> bool:
+        """simple looping timer
 
-    def plc_timer(self,) -> bool:
-        """Timer object for PLC scan
+        Args:
+            preset (int, optional): Timer preset in milliseconds. Defaults to plc_scan_rate.
 
         Returns:
-            TimerResponse: done bit, current timestamp(ms), accumulator(ms)
+            bool: accumulated time >= timer preset
         """
         timer = SimpleTimer(self._plc_last_scan_time, self.plc_scan_rate)
         if timer.DN:
@@ -147,13 +150,14 @@ class SaniTrendPLC:
 
 @dataclass
 class Thingworx:
-    """Thingworx connectivity class
+    """Thingworx class
     """
-    headers = {
+    http_headers = {
         'Connection': 'keep-alive',
         'Accept': 'application/json',
         'Content-Type': 'application/json'
     }
+
     twx_connected: bool = False
     thingworx_session = requests.Session()
     _twx_last_connection_test: int = 0
@@ -186,8 +190,10 @@ class Thingworx:
 
                 self._twx_conn_test_in_progress = False
 
+
         
         
+
 @dataclass
 class SaniTrendCloud(SaniTrendLogging, SaniTrendPLC, Thingworx):
     pass
