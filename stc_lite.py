@@ -13,12 +13,11 @@ import sqlite3
 import sys
 import time
 
-@dataclass
 class SaniTrendLogging():
     log_enable: bool = True
     logger = logging.getLogger('STC_Logs')
     logger.setLevel(logging.DEBUG)
-    logger_formatter = logging.Formatter('%(levelname)s %(asctime)s - %(funcName)s: %(message)s')
+    logger_formatter = logging.Formatter('%(levelname)s-%(asctime)s: %(message)s')
     logger_handler = handlers.TimedRotatingFileHandler('stc.log', when='midnight', interval=1, backupCount=30)
     logger_handler.setFormatter(logger_formatter)
     logger.addHandler(logger_handler)
@@ -145,8 +144,25 @@ class SaniTrendPLC:
         return timer.DN
 
     def set_tag_data_buffer(self) -> None:
-        pass
+        for tag in self.tag_data:
+            add_tag = True
+            if isinstance(tag.Value, float):
+                tag.Value = round(tag.Value,2)
+            for tag_buffer in self.tag_data_buffer:
+                if tag.TagName == tag_buffer.TagName:
+                    add_tag = False
+                    if isinstance(tag_buffer.Value, float):
+                        difference = abs(tag.Value - tag_buffer.Value)
+                        if difference > self.delta:
+                            tag_buffer.Value = tag.Value
+                    else:
+                        if tag.Value != tag_buffer.Value:
+                            tag_buffer.Value = tag.Value
 
+                    continue
+                    
+            if add_tag:
+                self.tag_data_buffer.append(tag)
 
 @dataclass
 class Thingworx:
@@ -187,6 +203,7 @@ class Thingworx:
                 except Exception as e:
                     self.twx_connected = False
                     self._twx_last_connection_test = self._twx_last_connection_test + 30000
+                    SaniTrendLogging.add_log_entry('error', e)
 
                 self._twx_conn_test_in_progress = False
 
