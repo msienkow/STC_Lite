@@ -1,5 +1,4 @@
 import asyncio
-from dataclasses import dataclass, field
 from datetime import datetime
 import json
 import logging
@@ -13,69 +12,67 @@ import sqlite3
 import sys
 import time
 
-class SaniTrendLogging():
-    log_enable: bool = True
+
+class SaniTrendLogging:
     logger = logging.getLogger('STC_Logs')
     logger.setLevel(logging.DEBUG)
     logger_formatter = logging.Formatter('%(levelname)s-%(asctime)s: %(message)s')
     logger_handler = handlers.TimedRotatingFileHandler('stc.log', when='midnight', interval=1, backupCount=30)
     logger_handler.setFormatter(logger_formatter)
     logger.addHandler(logger_handler)
-    def add_log_entry(log_level, log_message, log_enable: bool = True) -> None:
-        if log_enable:
-            async def log(log_level, log_message) -> None:
-                level = log_level.lower()
-                log_levels = [
-                    {
-                        'log_level_logger': SaniTrendLogging.logger.debug,
-                        'search': [
-                            'de',
-                            'bug'
-                        ]
-                    },
-                    {
-                        'log_level_logger': SaniTrendLogging.logger.info,
-                        'search': [
-                            'in',
-                            'fo'
-                        ]
-                    },
-                    {
-                        'log_level_logger': SaniTrendLogging.logger.warning,
-                        'search': [
-                            'war',
-                            'arn'
-                        ]
-                    },
-                    {
-                        'log_level_logger': SaniTrendLogging.logger.error,
-                        'search': [
-                            'er',
-                            'or'
-                        ]
-                    },
-                    {
-                        'log_level_logger': SaniTrendLogging.logger.critical,
-                        'search': [
-                            'cr',
-                            'it'
-                        ]
-                    }
-                ]
+    async def add_log_entry(log_level, log_message) -> None:
+        async def log(log_level, log_message) -> None:
+            level = log_level.lower()
+            log_levels = [
+                {
+                    'log_level_logger': SaniTrendLogging.logger.debug,
+                    'search': [
+                        'de',
+                        'bug'
+                    ]
+                },
+                {
+                    'log_level_logger': SaniTrendLogging.logger.info,
+                    'search': [
+                        'in',
+                        'fo'
+                    ]
+                },
+                {
+                    'log_level_logger': SaniTrendLogging.logger.warning,
+                    'search': [
+                        'war',
+                        'arn'
+                    ]
+                },
+                {
+                    'log_level_logger': SaniTrendLogging.logger.error,
+                    'search': [
+                        'er',
+                        'or'
+                    ]
+                },
+                {
+                    'log_level_logger': SaniTrendLogging.logger.critical,
+                    'search': [
+                        'cr',
+                        'it'
+                    ]
+                }
+            ]
 
-                log_level_to_use = SaniTrendLogging.logger.info
-                for log_dict in log_levels:
-                    for search_term in log_dict['search']:
-                        if level.find(search_term) > -1:
-                            log_level_to_use = log_dict['log_level_logger']
-                            break
-                
-                log_level_to_use(log_message)
+            log_level_to_use = SaniTrendLogging.logger.info
+            for log_dict in log_levels:
+                for search_term in log_dict['search']:
+                    if level.find(search_term) > -1:
+                        log_level_to_use = log_dict['log_level_logger']
+                        break
             
-            asyncio.run(log(log_level, log_message))
-
-
-
+            log_level_to_use(log_message)
+        
+        await log(log_level, log_message)
+              
+        
 class SimpleTimer():
     def __init__(self, entered_time: int = 0, preset: int = 0):
         self.ACC = 0
@@ -98,57 +95,102 @@ class SimpleTimer():
         self.ACC = time_elapsed
         self.timestamp = current_datetime
         self.DN = True if time_elapsed >= preset else False
-            
-
-@dataclass
-class SaniTrendDatabase:
-    """Class for database data logging
-    """
-    database: str = os.path.join(os.path.dirname(__file__), 'stc.db')
-    logging_active: bool = False
 
 
-
-
-@dataclass
-class SaniTrendPLC:
-    """PLC communication class
-    """
-    delta: float = 0.49
-    plc_ipaddress: str = ''
-    plc_path: str = ''
-    plc_scan_rate: int = 1000
-    tags: list = field(default_factory=list)
-    tag_data: list = field(default_factory=list)
-    tag_data_buffer: list = field(default_factory=list)
-    virtual_analog_input_tag: str = ''
-    virtual_digital_input_tag: str = ''
-    virtual_string_tag: str = ''
-    virtual_analog_inputs_enable: bool = False
-    virtual_digital_inputs_enable: bool = False
-    virtual_string_input_enable: bool = False
-    virtual_tag_config: list = field(default_factory=list)
+class STC:
     
-    def plc_scan_timer(self,preset: int = plc_scan_rate) -> bool:
-        """simple looping timer
+    def __init__(self, config_file= 'SaniTrendConfig.json'):
+        self.plc_config = {
+            'delta': 0.495,
+            'ipaddress': '',
+            'path': '',
+            'scan_rate': 1000,
+            'tags': [],
+            'virt_analog_tag' : '',
+            'virt_digital_tag': '',
+            'virt_string_tag': '',
+            'virt_analog_enable': False,
+            'virt_digital_enable': False,
+            'virt_string_enable': False,
+            'virt_tag_config': []
+        }
+        self.plc_data = []
+        self.plc_data_buffer = []
 
-        Args:
-            preset (int, optional): Timer preset in milliseconds. Defaults to plc_scan_rate.
+        self.twx_config = {
+            'headers': {
+                'Connection': 'keep-alive',
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            }
+        }
+
+        self.twx_connected: bool = False
+        self._twx_connection_session = requests.Session()
+        self._twx_last_connection_test: int = 0
+        self._twx_conn_test_in_progress: bool = False
+    
+
+
+    def plc_scan_timer(self,) -> bool:
+        """PLC Scan Rate Timer\n
+        Scan Rate set in config file
 
         Returns:
             bool: accumulated time >= timer preset
         """
-        timer = SimpleTimer(self._plc_last_scan_time, self.plc_scan_rate)
+        timer = SimpleTimer(self._plc_last_scan_time, self.plc_config['scan_rate'])
         if timer.DN:
             self._plc_last_scan_time = timer.timestamp
         return timer.DN
+        
+    
+    def _twx_conn_timer(self,) -> bool:
+        """Thingworx connection check timer
 
-    def set_tag_data_buffer(self) -> None:
-        for tag in self.tag_data:
+        Returns:
+            bool: timer done
+        """
+        timer = SimpleTimer(self._twx_last_connection_test, 10000)
+        if timer.DN:
+            self._twx_last_connection_test = timer.timestamp
+        return timer.DN
+
+
+    async def get_twx_connection_status(self,) -> None:
+        """Get Thingworx connection status
+        """
+        timer_done = self._twx_conn_timer()
+        if timer_done and not self._twx_conn_test_in_progress:
+            self._twx_conn_test_in_progress = True
+            async def _get_twx_connection_status(self,) -> None:
+                """asyncio function to make request to Thingworx EMS for isConnected Property
+                """
+                url = 'http://localhost:8000/Thingworx/Things/LocalEms/Properties/isConnected'
+                try:
+                    connection_response = self._twx_connection_session.get(url, headers=self.twx_config['headers'], timeout=5)
+                    if  connection_response.status_code == 200:
+                        self.twx_connected = (connection_response.json())['rows'][0]['isConnected']
+
+                    else:
+                        SaniTrendLogging.add_log_entry('error', connection_response)
+                        self.twx_connected = False
+
+                except Exception as e:
+                    self.twx_connected = False
+                    self._twx_last_connection_test = self._twx_last_connection_test + 30000
+                    SaniTrendLogging.add_log_entry('error', e)
+
+                self._twx_conn_test_in_progress = False
+
+            asyncio.create_task(_get_twx_connection_status(self))
+
+    def get_tag_data(self, tag_data: list = []) -> None:
+        for tag in tag_data:
             add_tag = True
             if isinstance(tag.Value, float):
                 tag.Value = round(tag.Value,2)
-            for tag_buffer in self.tag_data_buffer:
+            for tag_buffer in self.data_buffer:
                 if tag.TagName == tag_buffer.TagName:
                     add_tag = False
                     if isinstance(tag_buffer.Value, float):
@@ -164,67 +206,26 @@ class SaniTrendPLC:
             if add_tag:
                 self.tag_data_buffer.append(tag)
 
-@dataclass
-class Thingworx:
-    """Thingworx class
+
+
+
+
+class SaniTrendDatabase:
+    """Class for database data logging
     """
-    http_headers = {
-        'Connection': 'keep-alive',
-        'Accept': 'application/json',
-        'Content-Type': 'application/json'
-    }
-
-    twx_connected: bool = False
-    thingworx_session = requests.Session()
-    _twx_last_connection_test: int = 0
-    _twx_conn_test_in_progress: bool = False
-
-    def twx_conn_timer(self,) -> bool:
-        timer = SimpleTimer(self._twx_last_connection_test, 10000)
-        if timer.DN:
-            self._twx_last_connection_test = timer.timestamp
-        return timer.DN
-
-    def get_twx_connection_status(self) -> None:
-        timer_dn = self.txw_conn_timer()
-        if timer_dn and not self._twx_conn_test_in_progress:
-            self._twx_conn_test_in_progress = True
-            async def _get_twx_connection_status(self) -> None:
-                url = 'http://localhost:8000/Thingworx/Things/LocalEms/Properties/isConnected'
-                try:
-                    connection_response = self._connection_status_session.get(url, headers=self.headers, timeout=5)
-                    if  connection_response.status_code == 200:
-                        self.twx_connected = (connection_response.json())['rows'][0]['isConnected']
-
-                    else:
-                        SaniTrendLogging.add_log_entry('error', connection_response)
-                        self.twx_connected = False
-
-                except Exception as e:
-                    self.twx_connected = False
-                    self._twx_last_connection_test = self._twx_last_connection_test + 30000
-                    SaniTrendLogging.add_log_entry('error', e)
-
-                self._twx_conn_test_in_progress = False
+    database: str = os.path.join(os.path.dirname(__file__), 'stc.db')
+    logging_active: bool = False
 
 
-        
-        
-
-@dataclass
-class SaniTrendCloud(SaniTrendLogging, SaniTrendPLC, Thingworx):
-    pass
-    
-
-
-
-
-def main():
-    # sanitrend_logger.log_error('test', 'test123')
-    SaniTrendLogging.add_log_entry('info', 'test123')
+async def main():
+    test = STC()
+    # test.get_twx_connection_status()
+    asyncio.create_task(SaniTrendLogging.add_log_entry('warn', 'testing 1 2 3'))
+    # await SaniTrendLogging.add_log_entry('warn', 'testing 1 2 3')
+    print('test')
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())
 
 # while True:
     # log_error('twx_connected', test.twx_connected)
