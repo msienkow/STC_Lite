@@ -28,20 +28,10 @@ class SimpleTimer():
         self.ACC = 0
         self.DN = False
         self.timestamp = 0
-        # self.timestamp = int(round(time.time() * 1000))
-        # self.DN = True
 
-        # @property
-        # def entered_time(self):
-        #     return self._entered_time
-        
-        # @entered_time.setter
-        # def entered_time(self, entered_time):
-        #     self._entered_time = entered_time
-
-        self._simple_timer(self.entered_time, self.preset)
+        self._simple_timer()
     
-    def _simple_timer(self,entered_time, preset) -> None:
+    def _simple_timer(self,) -> None:
         """Allen-Bradley PLC Timer replica
 
         Args:
@@ -52,15 +42,13 @@ class SimpleTimer():
             None: 
         """
         current_datetime = int(round(time.time() * 1000))
-        time_elapsed = current_datetime - entered_time
+        time_elapsed = current_datetime - self.entered_time
         self.ACC = time_elapsed
         self.timestamp = current_datetime
-        self.DN = True if time_elapsed >= preset else False
-        print(entered_time, preset, time_elapsed)
-
+        self.DN = True if time_elapsed >= self.preset else False
+        
 
 class STC:
-    
     def __init__(self, config_file: str ="SaniTrendConfig.json"):
         self.plc_config = {
             "delta": 0.495,
@@ -76,9 +64,10 @@ class STC:
             "virt_string_enable": False,
             "virt_tag_config": []
         }
+
+        self._plc_last_scan_time:int = 0
         self.plc_data = []
         self.plc_data_buffer = []
-
         self.twx_config = {
             "headers": {
                 "Connection": "keep-alive",
@@ -89,11 +78,8 @@ class STC:
         }
 
         self.twx_connected: bool = False
-        self.twx_last_connection_test: int = 0
-        self.twx_conn_test_in_progress: bool = False
+        self._twx_last_conn_test = 0
     
-
-
     def plc_scan_timer(self,) -> bool:
         """PLC Scan Rate Timer\n
         Scan Rate set in config file
@@ -107,29 +93,25 @@ class STC:
         return timer.DN
         
     
-    
-
-    async def get_twx_connection_status(self,) -> None:
-        timer = SimpleTimer(self.twx_last_connection_test, 10000)
+    def get_twx_connection_status(self,) -> None:
+        timer = SimpleTimer(self._twx_last_conn_test, 10000)
         if timer.DN:
-            self.twx_last_connection_test = timer.timestamp
-            
-        if timer.DN and not self.twx_conn_test_in_progress:
-            self.twx_conn_test_in_progress = True
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(self.twx_config["conn_url"], headers=self.twx_config["headers"], timeout=1) as response:
-                        result = await response.json()
-                        if  response.status == 200:
-                            self.twx_connected = (result)["rows"][0]["isConnected"]
-                            SaniTrendLogging.logger.info("Thingworx is connected.")
-                            
-            except Exception as e:
-                SaniTrendLogging.logger.error(repr(e))
-                self.twx_connected = False
-                self._twx_last_connection_test = self._twx_last_connection_test + 30000
+            self._twx_last_conn_test = timer.timestamp
+            asyncio.create_task(self._get_twx_connection_status())
 
-        self._twx_conn_test_in_progress = False
+    async def _get_twx_connection_status(self,) -> None:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(self.twx_config["conn_url"], headers=self.twx_config["headers"], timeout=1) as response:
+                    result = await response.json()
+                    if  response.status == 200:
+                        self.twx_connected = (result)["rows"][0]["isConnected"]
+                        SaniTrendLogging.logger.info("Thingworx is connected.")
+                        
+        except Exception as e:
+            SaniTrendLogging.logger.error(repr(e))
+            self.twx_connected = False
+            self._twx_last_conn_test = self._twx_last_conn_test + 30000
 
 
     def get_tag_data(self, tag_data: list = []) -> None:
@@ -170,7 +152,9 @@ async def main():
     while run_code:
         try:
             test = STC()
-            asyncio.create_task(test.get_twx_connection_status())
+            test.get_twx_connection_status()
+            print(test._twx_last_conn_test)
+            
             await asyncio.sleep(3)
 
 
