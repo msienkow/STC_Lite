@@ -20,7 +20,7 @@ python -m pip install pylogix
 python -m pip install aiohttp
 ```
 
-Linux
+* Linux
 ```console
 pip3 install pylogix
 pip3 install aiohttp
