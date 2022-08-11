@@ -10,7 +10,6 @@ import platform
 import requests
 import sqlite3
 import sys
-import threading
 import time
 
 
@@ -33,6 +32,48 @@ class SimpleTimer():
     def __post_init__(self):
         self.timestamp = int(round(time.time() * 1000))
         self.done = True if (self.timestamp - self.compare_time) >= self.preset else False
+
+# def RoundTagData(tag_data: list = []) -> list:
+#         for tag in tag_data:
+#             if isinstance(tag.Value, float):
+#                 tag.Value = round(tag.Value,2)
+#             for tag_buffer in self.data_buffer:
+#                 if tag.TagName == tag_buffer.TagName:
+#                     add_tag = False
+#                     if isinstance(tag_buffer.Value, float):
+#                         difference = abs(tag.Value - tag_buffer.Value)
+#                         if difference > self.delta:
+#                             tag_buffer.Value = tag.Value
+#                     else:
+#                         if tag.Value != tag_buffer.Value:
+#                             tag_buffer.Value = tag.Value
+
+#                     continue
+                    
+#             if add_tag:
+#                 self.tag_data_buffer.append(tag)
+
+# def UpdateTagData(tag_data: list = []) -> list:
+#         for tag in tag_data:
+#             add_tag = True
+#             if isinstance(tag.Value, float):
+#                 tag.Value = round(tag.Value,2)
+#             for tag_buffer in self.data_buffer:
+#                 if tag.TagName == tag_buffer.TagName:
+#                     add_tag = False
+#                     if isinstance(tag_buffer.Value, float):
+#                         difference = abs(tag.Value - tag_buffer.Value)
+#                         if difference > self.delta:
+#                             tag_buffer.Value = tag.Value
+#                     else:
+#                         if tag.Value != tag_buffer.Value:
+#                             tag_buffer.Value = tag.Value
+
+#                     continue
+                    
+#             if add_tag:
+#                 self.tag_data_buffer.append(tag)
+
 
 async def GetTagValue(tag_data: list = [], tag_name: str = '') -> any:
     if tag_data and tag_name:
@@ -122,22 +163,9 @@ class STC:
                 self.twx_connected = response['rows'][0]['isConnected']
                 self.twx_conn_fail_count = 0
             else:
+                self.twx_conn_fail_count += 1
                 self.twx_connected = False
                 self.twx_conn_fail_count += 1
-                if self.twx_conn_fail_count > 12:
-                    self.twx_last_conn_test += 30000
-
-    def _get_twx_connection_status(self) -> None:
-        result = self.twx_request(request_type = 'get', url = self.twx_conn_url)
-        if isinstance(result, requests.models.Response):
-            if result.status_code == 200:
-                self.twx_connected = (result.json())["rows"][0]["isConnected"]
-            else:
-                self.twx_connected = False
-        else:
-            self.twx_conn_fail_count += 1
-            if self.twx_conn_fail_count > 3:
-                self.twx_connected = False
                 if self.twx_conn_fail_count > 12:
                     self.twx_last_conn_test += 60000
 
