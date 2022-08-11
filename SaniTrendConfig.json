@@ -1,0 +1,118 @@
+{
+    "Config": {
+        "PLCIPAddress": "192.168.1.132",
+        "PLCScanRate" : "1000",
+        "SMINumber": "9999"
+    },
+    "Tags": [
+        {
+            "tag": "Analog_In_1",
+            "twxtype": "NUMBER"
+        },
+                {
+            "tag": "Analog_In_2",
+            "twxtype": "NUMBER"
+        },
+                {
+            "tag": "Analog_In_3",
+            "twxtype": "NUMBER"
+        },
+                {
+            "tag": "Analog_In_4",
+            "twxtype": "NUMBER"
+        },
+                {
+            "tag": "Analog_In_5",
+            "twxtype": "NUMBER"
+        },
+                {
+            "tag": "Analog_In_6",
+            "twxtype": "NUMBER"
+        },
+                {
+            "tag": "Analog_In_7",
+            "twxtype": "NUMBER"
+        },
+                {
+            "tag": "Analog_In_8",
+            "twxtype": "NUMBER"
+        },
+                {
+            "tag": "Digital_In_1",
+            "twxtype": "BOOLEAN"
+        },
+                {
+            "tag": "Digital_In_1",
+            "twxtype": "BOOLEAN"
+        },
+                {
+            "tag": "Digital_In_1",
+            "twxtype": "BOOLEAN"
+        },
+                {
+            "tag": "Digital_In_1",
+            "twxtype": "BOOLEAN"
+        },
+                {
+            "tag": "Digital_In_2",
+            "twxtype": "BOOLEAN"
+        },
+                {
+            "tag": "Digital_In_3",
+            "twxtype": "BOOLEAN"
+        },
+                {
+            "tag": "Digital_In_4",
+            "twxtype": "BOOLEAN"
+        },
+                {
+            "tag": "Digital_In_5",
+            "twxtype": "BOOLEAN"
+        },
+                {
+            "tag": "Digital_In_6",
+            "twxtype": "BOOLEAN"
+        },
+                {
+            "tag": "Digital_In_7",
+            "twxtype": "BOOLEAN"
+        },
+                {
+            "tag": "Digital_In_8",
+            "twxtype": "BOOLEAN"
+        },
+                {
+            "tag": "Digital_In_9",
+            "twxtype": "BOOLEAN"
+        },
+                {
+            "tag": "Digital_In_10",
+            "twxtype": "BOOLEAN"
+        },
+                {
+            "tag": "Digital_In_11",
+            "twxtype": "BOOLEAN"
+        },
+                {
+            "tag": "Digital_In_12",
+            "twxtype": "BOOLEAN"
+        },
+                {
+            "tag": "SaniTrend_Watchdog",
+            "twxtype": "BOOLEAN"
+        },
+                {
+            "tag": "PLC_Watchdog",
+            "twxtype": "BOOLEAN"
+        },
+                {
+            "tag": "Reboot",
+            "twxtype": "BOOLEAN"
+        },
+                {
+            "tag": "Recipe",
+            "twxtype": "STRING"
+        }
+
+    ]
+}
