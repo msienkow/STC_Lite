@@ -1,5 +1,3 @@
-import asyncio
-import aiohttp
 from dataclasses import dataclass, field
 import json
 import logging
@@ -22,6 +20,15 @@ class SaniTrendLogging:
     logger_handler.setFormatter(logger_formatter)
     logger.addHandler(logger_handler)
 
+def GetTagValue(tag_data: list = [], tag_name: str = '') -> any:
+    if tag_data and tag_name:
+        values = (tag.Value for tag in tag_data if tag.TagName == tag_name)
+        for value in values:
+            if isinstance(value, float):
+                return round(value, 2)
+            else:
+                return value
+
 @dataclass
 class SimpleTimer():
     '''Simple timer class that mimics a PLC timer instruction.'''
@@ -33,37 +40,6 @@ class SimpleTimer():
     def __post_init__(self):
         self.timestamp = int(round(time.time() * 1000))
         self.done = True if (self.timestamp - self.compare_time) >= self.preset else False
-
-async def GetTagValue(tag_data: list = [], tag_name: str = '') -> any:
-    if tag_data and tag_name:
-        values = (tag.Value for tag in tag_data if tag.TagName == tag_name)
-        for value in values:
-            if isinstance(value, float):
-                return round(value, 2)
-            else:
-                return value
-
-async def twx_request(request_type: str, url: str, headers = {}, data: dict = {}, timeout: int = 5):
-    async with aiohttp.ClientSession() as session:
-        request_types = {
-            'get': session.get,
-            'post': session.post
-        }
-        request_type = request_type.lower()
-        if request_type in request_types:
-            try:
-                async with request_types[request_type](url = url, headers = headers, json = data, timeout = timeout) as response:
-                    if response.status == 200:
-                        return await response.json()
-                    else:
-                        SaniTrendLogging.logger.error(repr(e))
-                        return None
-            except Exception as e:
-                SaniTrendLogging.logger.error(repr(e))
-        else:
-            SaniTrendLogging.logger.exception('Request method not defined.')
-
-
 
 
         
@@ -86,7 +62,7 @@ class STC:
     plc_enable_string: bool = False
 
     twx_tag_table: dict = field(default_factory = dict)
-    # twx_session: aiohttp.client.ClientSession = aiohttp.ClientSession()
+    twx_session: requests.sessions.Session = requests.session()
     twx_connected: bool = False
     twx_last_conn_test: int = 0
     twx_conn_fail_count: int = 0
@@ -111,21 +87,26 @@ class STC:
         if timer.done:
             self.plc_last_scan_time = timer.timestamp
         return timer.done
-
-    async def get_twx_connection_status(self) -> None:
+       
+    def twx_request(self, request_type: str, url: str, data: dict = {}, timeout: int = 5):
+        request_types = {
+            'get': self.twx_session.get,
+            'post': self.twx_session.post
+        }
+        request_type = request_type.lower()
+        if request_type in request_types:
+            try:
+                return request_types[request_type](url = url, headers = self.twx_headers, json = data, timeout = timeout)
+            except Exception as e:
+                SaniTrendLogging.logger.error(repr(e))
+        else:
+            SaniTrendLogging.logger.exception('Request method not defined.')
+    
+    def get_twx_connection_status(self) -> None:
         timer = SimpleTimer(self.twx_last_conn_test, 10000)
         if timer.done:
             self.twx_last_conn_test = timer.timestamp
-            print(timer.timestamp)
-            response = await twx_request('get', self.twx_conn_url, self.twx_headers)
-            if isinstance(response, dict):
-                self.twx_connected = response['rows'][0]['isConnected']
-                self.twx_conn_fail_count = 0
-            else:
-                self.twx_connected = False
-                self.twx_conn_fail_count += 1
-                if self.twx_conn_fail_count > 12:
-                    self.twx_last_conn_test += 30000
+            threading.Thread(target=self._get_twx_connection_status).start()
 
     def _get_twx_connection_status(self) -> None:
         result = self.twx_request(request_type = 'get', url = self.twx_conn_url)
@@ -169,18 +150,15 @@ class SaniTrendDatabase:
     database: str = os.path.join(os.path.dirname(__file__), "stc.db")
     logging_active: bool = False
 
-async def main():
+
+def main():
     test = STC()
-    
     while True:
-        asyncio.create_task(test.get_twx_connection_status())
-        print(test.twx_connected)
-        await asyncio.sleep(0.250)
-        # test.get_twx_connection_status()
-        # enable_plc_scan = test.plc_scan_timer()
-        # if enable_plc_scan:
-        #     print(test.twx_last_conn_test, test.twx_connected)
-        # time.sleep(0.250)
+        test.get_twx_connection_status()
+        enable_plc_scan = test.plc_scan_timer()
+        if enable_plc_scan:
+            print(test.twx_last_conn_test, test.twx_connected)
+        time.sleep(0.250)
         
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

@@ -1,0 +1,2 @@
+pylogix
+aiohttp
