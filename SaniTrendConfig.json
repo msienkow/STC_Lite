@@ -1,7 +1,7 @@
 {
     "Config": {
         "PLCIPAddress": "192.168.1.132",
-        "PLCScanRate" : "1000",
+        "PLCScanRate" : "2000",
         "SMINumber": "9999"
     },
     "Tags": [

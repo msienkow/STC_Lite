@@ -130,7 +130,7 @@ async def twx_request(request_type: str, url: str, data: dict = {}, timeout: int
         request_type = request_type.lower()
         if request_type in request_types:
             try:
-                async with request_types[request_type](url, headers = headers) as response:
+                async with request_types[request_type](url, headers = headers, data = data) as response:
                     if response.status == 200:
                         return await response.json()
                     else:
@@ -218,6 +218,22 @@ class STC:
         tag_name, tag_value = tag
         return self.plc.Write(tag_name, tag_value)
 
+    async def UploadTagDataToTwx(self) -> None:
+        upload_data = False
+        for tag_data in self.plc_data:
+            add_tag = True
+            for old_data in self.plc_data_buffer:
+                add_tag = False
+                if tag_data.TagName == old_data.TagName:
+                    if tag_data.Value != old_data.Value:
+                        upload_data = True
+                        old_data.Value = tag_data.Value
+            if add_tag:
+                self.plc_data_buffer.append(tag_data)
+            if self.twx_connected:
+                url = f'/Thingworx/Things/{self.smi_number}/Services/UpdatePropertyValues'
+                twx_request('post', url, self.plc_data_buffer)
+
     async def get_twx_connection_status(self) -> None:
         timer = SimpleTimer(self.twx_last_conn_test, 10000)
         url = '/Thingworx/Things/LocalEms/Properties/isConnected'
@@ -293,6 +309,8 @@ class STC:
                 self.remote_plc_config.append(('Virtualize_DIn', result['Virtualize_DIn']))
                 self.remote_plc_config.append(('Virtualize_String', result['Virtualize_String']))
 
+    
+
 
 class SaniTrendDatabase:
     """Class for database data logging
@@ -309,22 +327,25 @@ async def main():
     test = STC()
     while True:
         asyncio.create_task(test.get_twx_connection_status())
+        print(test.twx_connected)
         asyncio.create_task(test.get_remote_plc_config())
-        if test.plc_scan_timer():
-            asyncio.create_task(test.get_twx_connection_status())
-            asyncio.create_task(test.get_remote_plc_config())
-            for tag in test.plc_tag_list:
-                asyncio.create_task(test.ReadTags(tag))
+        # if test.plc_scan_timer():
+        #     asyncio.create_task(test.get_twx_connection_status())
+        #     asyncio.create_task(test.get_remote_plc_config())
+        #     for tag in test.plc_tag_list:
+        #         asyncio.create_task(test.ReadTags(tag))
         
-            comms = []
-            comms.append(('SaniTrend_Watchdog', get_tag_value(test.plc_data, 'PLC_Watchdog')))
-            comms.append(('Twx_Alarm', not test.twx_connected))
+        #     comms = []
+        #     comms.append(('SaniTrend_Watchdog', get_tag_value(test.plc_data, 'PLC_Watchdog')))
+        #     comms.append(('Twx_Alarm', not test.twx_connected))
             
-            asyncio.create_task(test.WriteTags(test.remote_plc_config))
-            asyncio.create_task(test.WriteTags(comms))
+        #     if test.remote_plc_config:
+        #         asyncio.create_task(test.WriteTags(test.remote_plc_config))
+        #     asyncio.create_task(test.WriteTags(comms))
+        #     print(test.remote_plc_config)
                
 
-        await asyncio.sleep(5)
+        await asyncio.sleep(1)
 
 if __name__ == "__main__":
     asyncio.run(main())
