@@ -1,4 +1,4 @@
-# STC_Lite
+# STC_Lite 
 SaniTrend™ Cloud Lite
 
 This project contains python scripts to communicate with an Allen-Bradley Micro800 series controller, and a Thingworx instance (not included)
