@@ -26,6 +26,28 @@ class SaniTrendLogging:
 
 
 
+class SaniTrendDatabase:
+    database = os.path.join(os.path.dirname(__file__), "stc.db")
+
+
+    def log_twx_data_to_db(data: list, dbase: str = database):
+        try:
+            with sqlite3.connect(database=dbase) as db:
+                cur = db.cursor()
+                cur.execute(''' CREATE TABLE if not exists sanitrend (TwxData text, SentToTwx integer) ''')   
+                records = []     
+                sql_as_text = ''
+                insert_query = ''' INSERT INTO sanitrend (TwxData, SentToTwx) VALUES (?,?); '''
+                sql_as_text = json.dumps(data)
+                records.append((sql_as_text, False)) 
+                cur.executemany(insert_query, records)
+                db.commit()
+
+        except Exception as e:
+            SaniTrendLogging.logger.error(repr(e))
+    
+
+
 @dataclass
 class SimpleTimer():
     '''Simple timer class that mimics a PLC timer instruction.'''
@@ -37,118 +59,6 @@ class SimpleTimer():
     def __post_init__(self):
         self.timestamp = int(round(time.time() * 1000))
         self.done = True if (self.timestamp - self.compare_time) >= self.preset else False
-
-
-
-
-def RoundTagData(tag_data) -> any:
-    """Round float value to 2 decimal places \n
-    from list of tag data or single tag response \n
-    from a pylogix PLC read.
-
-    Args:
-        tag_data (lgx_response.Response or list[lxg_response.Response]): either single tag read, of list of tag data from read
-
-    Returns:
-        list: returns either a lgx_response.Response class or list of lgx_response.Response class
-    """
-    if isinstance(tag_data, list):
-        rounded_tag_data = []
-        for tag in tag_data:
-            value = round(tag.Value,2) if isinstance(tag.Value, float) else tag.Value
-            rounded_tag_data.append(lgx_response.Response(tag.TagName, value, tag.Status))
-
-        return rounded_tag_data
-
-    elif isinstance(tag_data, lgx_response.Response):
-        value = tag_data.Value
-        value = round(tag_data.Value,2) if isinstance(tag_data.Value, float) else tag_data.Value
-        return lgx_response.Response(tag_data.TagName, value, tag_data.Status)
-
-
-def get_tag_value(tag_data: list = [], tag_name: str = '') -> any:
-    if tag_data and tag_name:
-        values = (tag.Value for tag in tag_data if tag.TagName == tag_name)
-        for value in values:
-            return value
-
-async def twx_request(request_type: str, url: str, data: list = [], timeout: int = 5):
-    new_data =  []
-    if data:
-        new_data = data.copy()
-
-    post_data = {}
-    headers = {
-        'Connection' : 'keep-alive',
-        'Accept' : 'application/json',
-        'Content-Type' : 'application/json'
-    }
-
-    datashape = {
-        'fieldDefinitions': {
-            'name': {
-                'name': 'name',
-                'aspects': {
-                    'isPrimaryKey': True
-                },
-            'description': 'Property name',
-            'baseType': 'STRING',
-            'ordinal': 0
-            },
-            'time': {
-                'name': 'time',
-                'aspects': {},
-                'description': 'time',
-                'baseType': 'DATETIME',
-                'ordinal': 0
-            },
-            'value': {
-                'name': 'value',
-                'aspects': {},
-                'description': 'value',
-                'baseType': 'VARIANT',
-                'ordinal': 0
-            },
-            'quality': {
-                'name': 'quality',
-                'aspects': {},
-                'description': 'quality',
-                'baseType': 'STRING',
-                'ordinal': 0
-            }
-        }
-    }
-
-    async with aiohttp.ClientSession('http://localhost:8000') as session:
-        request_types = {
-            'get': session.get,
-            'post': session.post,
-            'update_tag_values': session.post
-        }
-
-        request_type = request_type.lower()
-        if request_type in request_types:
-            if request_type == 'update_tag_values':
-                values = {}
-                values['rows'] = new_data
-                values['dataShape'] = datashape
-                post_data = {
-                    'values': values
-                }
-
-            try:
-                async with request_types[request_type](url, headers = headers, json = post_data) as response:
-                    if response.status == 200:
-                        return await response.json(content_type=None)
-
-                    else:
-                        return None
-
-            except Exception as e:
-                SaniTrendLogging.logger.error(repr(e))
-
-        else:
-            SaniTrendLogging.logger.exception('Request method not defined.')
 
 
 
@@ -204,8 +114,8 @@ class STC:
         return timer.done
 
 
-    async def ReadTags(self, tag: str = '') -> None:
-        new_data = await self.ReadTagData(tag)
+    async def read_tags(self, tag: str = '') -> None:
+        new_data = await self.read_tag_data(tag)
         if isinstance(new_data.Value, float):
             new_data.Value = round(new_data.Value, 2)    
 
@@ -225,25 +135,25 @@ class STC:
             self.plc_data.append(new_data)
         
 
-    async def ReadTagData(self, tags: list = []) -> lgx_response:
+    async def read_tag_data(self, tags: list = []) -> lgx_response:
         return self.plc.Read(tags)
 
 
-    async def WriteTags(self, tag_list):
+    async def write_tags(self, tag_list):
         try:
             for tag in tag_list:
-                x = await self.WriteTagData(tag)
+                x = await self.write_tag_data(tag)
 
         except Exception as e:
             SaniTrendLogging.logger.error(repr(e))
 
 
-    async def WriteTagData(self, tag):
+    async def write_tag_data(self, tag):
         tag_name, tag_value = tag
         return self.plc.Write(tag_name, tag_value)
 
 
-    async def UploadTagDataToTwx(self) -> None:
+    async def upload_tag_data_to_twx(self) -> None:
         new_data = []
         upload_data = []
         for tag_data in self.plc_data:
@@ -296,10 +206,10 @@ class STC:
                         }
                         
                         upload_data.append(twx_value)
-
+            SaniTrendDatabase.log_twx_data_to_db(upload_data)
             url = f'/Thingworx/Things/{self.smi_number}/Services/UpdatePropertyValues'
-            await twx_request('update_tag_values', url, upload_data)
-                      
+            response = await twx_request('update_tag_values', url, 'status', upload_data)
+                                  
 
     async def get_twx_connection_status(self) -> None:
         timer = SimpleTimer(self.twx_last_conn_test, 10000)
@@ -375,7 +285,7 @@ class STC:
                         tag_name_tag = f'Digital_In_Tags[{plc_array_number}]'
                         tag_name_data = (tag_name_tag, tag_name)
                         self.remote_plc_config.append(tag_name_data)
-                        
+
                 self.remote_plc_config.append(('PLC_IPAddress', result['PLC_IPAddress']))
                 self.remote_plc_config.append(('PLC_Path', result['PLC_Path']))
                 self.remote_plc_config.append(('Virtual_AIn_Tag', result['Virtual_AIn_Tag']))
@@ -385,14 +295,116 @@ class STC:
                 self.remote_plc_config.append(('Virtualize_DIn', result['Virtualize_DIn']))
                 self.remote_plc_config.append(('Virtualize_String', result['Virtualize_String']))
 
+
+
+
+def reboot_pc(self,):
+        platform = platform.system().lower()
+        if platform == 'windows':
+            os.system('shutdown /r /t 1')
+        elif platform == 'linux':
+            os.system('sudo reboot')
+
+
+def get_tag_value(tag_data: list = [], tag_name: str = '') -> any:
+    if tag_data and tag_name:
+        values = (tag.Value for tag in tag_data if tag.TagName == tag_name)
+        for value in values:
+            return value
+
+
+async def twx_request(request_type: str, url: str, response_type: str = 'json', data: list = [], timeout: int = 5):
+    new_data =  []
+    if data:
+        new_data = data.copy()
+
+    post_data = {}
+    headers = {
+        'Connection' : 'keep-alive',
+        'Accept' : 'application/json',
+        'Content-Type' : 'application/json'
+    }
+
+    datashape = {
+        'fieldDefinitions': {
+            'name': {
+                'name': 'name',
+                'aspects': {
+                    'isPrimaryKey': True
+                },
+            'description': 'Property name',
+            'baseType': 'STRING',
+            'ordinal': 0
+            },
+            'time': {
+                'name': 'time',
+                'aspects': {},
+                'description': 'time',
+                'baseType': 'DATETIME',
+                'ordinal': 0
+            },
+            'value': {
+                'name': 'value',
+                'aspects': {},
+                'description': 'value',
+                'baseType': 'VARIANT',
+                'ordinal': 0
+            },
+            'quality': {
+                'name': 'quality',
+                'aspects': {},
+                'description': 'quality',
+                'baseType': 'STRING',
+                'ordinal': 0
+            }
+        }
+    }
+
+    async with aiohttp.ClientSession('http://localhost:8000') as session:
+        request_types = {
+            'get': session.get,
+            'post': session.post,
+            'update_tag_values': session.post
+        }
+
+        request_type = request_type.lower()
+        if request_type in request_types:
+            if request_type == 'update_tag_values':
+                values = {}
+                values['rows'] = new_data
+                values['dataShape'] = datashape
+                post_data = {
+                    'values': values
+                }
+
+            try:
+                async with request_types[request_type](url, headers = headers, json = post_data) as response:
+                    response_json = await response.json(content_type=None)
+                    if response_type == 'json':
+                        if response.status == 200:
+                            return response_json
+                            
+                        else:
+                            return None
+
+                    elif response_type == 'status':
+                        return response.status
+
+            except Exception as e:
+                SaniTrendLogging.logger.error(repr(e))
+
+        else:
+            SaniTrendLogging.logger.exception('Request method not defined.')
+
+
+
+
+
+
     
 
 
-class SaniTrendDatabase:
-    """Class for database data logging
-    """
-    database: str = os.path.join(os.path.dirname(__file__), "stc.db")
-    logging_active: bool = False
+
 
 
 
@@ -406,21 +418,20 @@ async def main():
             asyncio.create_task(test.get_twx_connection_status())
             asyncio.create_task(test.get_remote_plc_config())
             for tag in test.plc_tag_list:
-                asyncio.create_task(test.ReadTags(tag))
+                asyncio.create_task(test.read_tags(tag))
             
             comms = []
             comms.append(('SaniTrend_Watchdog', get_tag_value(test.plc_data, 'PLC_Watchdog')))
             comms.append(('Twx_Alarm', not test.twx_connected))
-            asyncio.create_task(test.WriteTags(comms))
+            asyncio.create_task(test.write_tags(comms))
 
 
             if test.remote_plc_config:
-                asyncio.create_task(test.WriteTags(test.remote_plc_config))
+                asyncio.create_task(test.write_tags(test.remote_plc_config))
 
-            asyncio.create_task(test.UploadTagDataToTwx())
+            asyncio.create_task(test.upload_tag_data_to_twx())
         
-        await asyncio.sleep(0.25)
-        
+        await asyncio.sleep(0.1)
 
 if __name__ == "__main__":
     asyncio.run(main())
