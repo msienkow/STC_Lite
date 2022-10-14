@@ -12,6 +12,9 @@ import sqlite3
 import sys
 import time
 
+
+
+
 class SaniTrendLogging:
     logger = logging.getLogger("STC_Logs")
     logger.setLevel(logging.DEBUG)
@@ -19,6 +22,9 @@ class SaniTrendLogging:
     logger_handler = handlers.TimedRotatingFileHandler("stc.log", when="midnight", interval=1, backupCount=30)
     logger_handler.setFormatter(logger_formatter)
     logger.addHandler(logger_handler)
+
+
+
 
 @dataclass
 class SimpleTimer():
@@ -31,6 +37,9 @@ class SimpleTimer():
     def __post_init__(self):
         self.timestamp = int(round(time.time() * 1000))
         self.done = True if (self.timestamp - self.compare_time) >= self.preset else False
+
+
+
 
 def RoundTagData(tag_data) -> any:
     """Round float value to 2 decimal places \n
@@ -48,33 +57,13 @@ def RoundTagData(tag_data) -> any:
         for tag in tag_data:
             value = round(tag.Value,2) if isinstance(tag.Value, float) else tag.Value
             rounded_tag_data.append(lgx_response.Response(tag.TagName, value, tag.Status))
+
         return rounded_tag_data
+
     elif isinstance(tag_data, lgx_response.Response):
         value = tag_data.Value
         value = round(tag_data.Value,2) if isinstance(tag_data.Value, float) else tag_data.Value
         return lgx_response.Response(tag_data.TagName, value, tag_data.Status)
-
-            
-# def UpdateTagData(tag_data: list = []) -> list:
-#         for tag in tag_data:
-#             add_tag = True
-#             if isinstance(tag.Value, float):
-#                 tag.Value = round(tag.Value,2)
-#             for tag_buffer in self.data_buffer:
-#                 if tag.TagName == tag_buffer.TagName:
-#                     add_tag = False
-#                     if isinstance(tag_buffer.Value, float):
-#                         difference = abs(tag.Value - tag_buffer.Value)
-#                         if difference > self.delta:
-#                             tag_buffer.Value = tag.Value
-#                     else:
-#                         if tag.Value != tag_buffer.Value:
-#                             tag_buffer.Value = tag.Value
-
-#                     continue
-                    
-#             if add_tag:
-#                 self.tag_data_buffer.append(tag)
 
 
 def get_tag_value(tag_data: list = [], tag_name: str = '') -> any:
@@ -87,11 +76,14 @@ async def twx_request(request_type: str, url: str, data: list = [], timeout: int
     new_data =  []
     if data:
         new_data = data.copy()
+
     post_data = {}
-    headers = {'Connection' : 'keep-alive',
+    headers = {
+        'Connection' : 'keep-alive',
         'Accept' : 'application/json',
         'Content-Type' : 'application/json'
     }
+
     datashape = {
         'fieldDefinitions': {
             'name': {
@@ -126,12 +118,14 @@ async def twx_request(request_type: str, url: str, data: list = [], timeout: int
             }
         }
     }
+
     async with aiohttp.ClientSession('http://localhost:8000') as session:
         request_types = {
             'get': session.get,
             'post': session.post,
             'update_tag_values': session.post
         }
+
         request_type = request_type.lower()
         if request_type in request_types:
             if request_type == 'update_tag_values':
@@ -141,16 +135,23 @@ async def twx_request(request_type: str, url: str, data: list = [], timeout: int
                 post_data = {
                     'values': values
                 }
+
             try:
                 async with request_types[request_type](url, headers = headers, json = post_data) as response:
                     if response.status == 200:
                         return await response.json(content_type=None)
+
                     else:
                         return None
+
             except Exception as e:
                 SaniTrendLogging.logger.error(repr(e))
+
         else:
             SaniTrendLogging.logger.exception('Request method not defined.')
+
+
+
 
 @dataclass
 class STC:
@@ -174,6 +175,7 @@ class STC:
     twx_last_conn_test: int = 0
     twx_conn_fail_count: int = 0
     
+
     def __post_init__(self) -> None:
         with open(self.config_file) as file:
             config_data = json.load(file)
@@ -183,10 +185,12 @@ class STC:
             self.twx_tag_table = config_data['Tags']
             for tag in self.twx_tag_table:
                 self.plc_tag_list.append(tag['tag'])
+
             self.plc.IPAddress = self.plc_ip_address
             self.plc.Micro800 = True
             return None
     
+
     def plc_scan_timer(self) -> bool:
         """PLC Scan Rate Timer\n
         Scan Rate set in config file
@@ -199,10 +203,12 @@ class STC:
             self.plc_last_scan_time = timer.timestamp
         return timer.done
 
+
     async def ReadTags(self, tag: str = '') -> None:
         new_data = await self.ReadTagData(tag)
         if isinstance(new_data.Value, float):
             new_data.Value = round(new_data.Value, 2)    
+
         add_data = True
         for old_data in self.plc_data:
             if old_data.TagName == new_data.TagName:
@@ -210,25 +216,32 @@ class STC:
                 if isinstance(new_data.Value, float):
                     if abs(old_data.Value - new_data.Value) >= self.plc_tag_delta:
                         old_data.Value = new_data.Value
+
                 else:
                     if old_data.Value != new_data.Value:
                         old_data.Value = new_data.Value
+
         if add_data:
             self.plc_data.append(new_data)
         
+
     async def ReadTagData(self, tags: list = []) -> lgx_response:
         return self.plc.Read(tags)
+
 
     async def WriteTags(self, tag_list):
         try:
             for tag in tag_list:
                 x = await self.WriteTagData(tag)
+
         except Exception as e:
             SaniTrendLogging.logger.error(repr(e))
+
 
     async def WriteTagData(self, tag):
         tag_name, tag_value = tag
         return self.plc.Write(tag_name, tag_value)
+
 
     async def UploadTagDataToTwx(self) -> None:
         new_data = []
@@ -242,16 +255,19 @@ class STC:
                     if tag_data.Value != old_data['Value']:
                         old_data['Value'] = tag_data.Value
                         new_data.append(tag_data)
+
             if add_tag:
                 data_to_add = {
                     'TagName': tag_data.TagName,
                     'Value': tag_data.Value,
                     'Status': tag_data.Status
                 }
+
                 self.plc_data_buffer.append(data_to_add)
                 new_data.append(tag_data)
+
         if new_data:
-            
+            ignore_type = 'ignore'
             timestamp = int(round(time.time() * 1000))
             for item in new_data:
                 twx_value = {}
@@ -262,16 +278,14 @@ class STC:
                         twx_tag = twx_config['tag']
                         twx_basetype = twx_config['twxtype']
                         break
-                ignore_type = 'ignore'
-
+                
                 if twx_tag:
                     if twx_basetype.lower() != ignore_type:
                         tag_value = item.Value
                         twx_tag_value = round(tag_value,2) if isinstance(tag_value, float) else tag_value
                         twx_value['time'] = timestamp
                         twx_value['quality'] = 'GOOD'
-                        twx_value['name'] = twx_tag
-                        
+                        twx_value['name'] = twx_tag        
                         if twx_basetype == 'NUMBER' and isinf(tag_value):
                             twx_tag_value = -9999
                             twx_value['quality'] = 'BAD'
@@ -282,12 +296,9 @@ class STC:
                         }
                         
                         upload_data.append(twx_value)
-            
-            
-           
+
             url = f'/Thingworx/Things/{self.smi_number}/Services/UpdatePropertyValues'
             await twx_request('update_tag_values', url, upload_data)
-            
                       
 
     async def get_twx_connection_status(self) -> None:
@@ -299,12 +310,14 @@ class STC:
             if isinstance(response, dict):
                 self.twx_connected = response['rows'][0]['isConnected']
                 self.twx_conn_fail_count = 0
+
             else:
                 self.twx_conn_fail_count += 1
                 self.twx_connected = False
                 self.twx_conn_fail_count += 1
                 if self.twx_conn_fail_count > 12:
                     self.twx_last_conn_test += 60000
+
 
     async def get_remote_plc_config(self):
         url = f'/Thingworx/Things/{self.smi_number}/Services/GetPropertyValues'
@@ -327,18 +340,23 @@ class STC:
                     for key,value in property.items():
                         if key == 'PropertyName':
                             property_name = value
+
                         if key == 'TagName':
                             tag_name = value
+
                         if key == 'EUMin':
                             units_min = value
                             if units_min == '':
                                 units_min = 0
+
                         if key == 'EUMax':
                             units_max = value
                             if units_max == '':
                                 units_max = 1
+
                         if key == 'Units':
                             units = value
+
                     property_name_parts = property_name.split('_')
                     property_type = property_name_parts[0]
                     plc_array_number = int(property_name_parts[len(property_name_parts) - 1]) - 1
@@ -352,10 +370,12 @@ class STC:
                         units_tag = f'Analog_In_Units[{plc_array_number}]'
                         units_data = (units_tag, units)
                         self.remote_plc_config.extend((tag_name_data, units_min_data, units_max_data, units_data))
+
                     if property_type.upper() in digital:
                         tag_name_tag = f'Digital_In_Tags[{plc_array_number}]'
                         tag_name_data = (tag_name_tag, tag_name)
                         self.remote_plc_config.append(tag_name_data)
+                        
                 self.remote_plc_config.append(('PLC_IPAddress', result['PLC_IPAddress']))
                 self.remote_plc_config.append(('PLC_Path', result['PLC_Path']))
                 self.remote_plc_config.append(('Virtual_AIn_Tag', result['Virtual_AIn_Tag']))
