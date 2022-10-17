@@ -52,11 +52,10 @@ class SaniTrendDatabase:
         else:
             return True
 
-    def upload_twx_data_from_db(dbase: str, url: str) -> int:
+    async def upload_twx_data_from_db(dbase: str, url: str) -> int:
         select_query = '''select ROWID,TwxData,SentToTwx from sanitrend where SentToTwx = false LIMIT 32'''
         delete_ids = []
         sql_twx_data = []
-        full_url = f'http://localhost:8000{url}'
         try:
             with sqlite3.connect(database = dbase) as db:
                 cur = db.cursor()  
@@ -66,64 +65,15 @@ class SaniTrendDatabase:
                 for row in records:
                     delete_ids.append(row[0])
                     sql_twx_data = json.loads(row[1])
-                
-                with requests.Session() as session:
-                    values = {}
-                    values['rows'] = sql_twx_data
-                    values['dataShape'] = {
-                        'fieldDefinitions': {
-                            'name': {
-                                'name': 'name',
-                                'aspects': {
-                                    'isPrimaryKey': True
-                                },
-                            'description': 'Property name',
-                            'baseType': 'STRING',
-                            'ordinal': 0
-                            },
-                            'time': {
-                                'name': 'time',
-                                'aspects': {},
-                                'description': 'time',
-                                'baseType': 'DATETIME',
-                                'ordinal': 0
-                            },
-                            'value': {
-                                'name': 'value',
-                                'aspects': {},
-                                'description': 'value',
-                                'baseType': 'VARIANT',
-                                'ordinal': 0
-                            },
-                            'quality': {
-                                'name': 'quality',
-                                'aspects': {},
-                                'description': 'quality',
-                                'baseType': 'STRING',
-                                'ordinal': 0
-                            }
-                        }
-                    }
-
-                    json_data = {
-                        'values' : values
-                    }
-
-                    headers = {
-                        'Connection' : 'keep-alive',
-                        'Accept' : 'application/json',
-                        'Content-Type' : 'application/json'
-                    }
-
-                    http_response = session.post(full_url, headers = headers, json = json_data)
-                    # response = await twx_request('update_tag_values', url, 'status', sql_twx_data)
-                    if http_response.status_code == 200:
-                        delete_query = ''' DELETE FROM sanitrend where ROWID=? '''
-                        for id in delete_ids:
-                            cur.execute(delete_query, (id,))
-                        db.commit()
-                
-                    return http_response
+                print(type(sql_twx_data))    
+                response = await twx_request('update_tag_values', url, 'status', sql_twx_data)
+                if response.status_code == 200:
+                    delete_query = ''' DELETE FROM sanitrend where ROWID=? '''
+                    for id in delete_ids:
+                        cur.execute(delete_query, (id,))
+                    db.commit()
+            
+                return response
             
         except Exception as e:
             SaniTrendLogging.logger.error(repr(e))
