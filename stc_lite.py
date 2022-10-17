@@ -27,9 +27,9 @@ class SaniTrendLogging:
 
 @dataclass
 class SaniTrendDatabase:
-    database: str = os.path.join(os.path.dirname(__file__), "stc.db")
 
-    def log_twx_data_to_db(data: list, dbase: str = database) -> None:
+
+    async def log_twx_data_to_db(data: list, dbase: str) -> bool:
         try:
             with sqlite3.connect(database = dbase) as db:
                 cur = db.cursor()
@@ -41,9 +41,37 @@ class SaniTrendDatabase:
                 records.append((sql_as_text, False)) 
                 cur.executemany(insert_query, records)
                 db.commit()
+                return True
+        
         except Exception as e:
             SaniTrendLogging.logger.error(repr(e))
+            return False
     
+
+    async def upload_twx_data_from_db(dbase: str, url: str) -> int:
+        select_query = '''select ROWID,TwxData,SentToTwx from sanitrend where SentToTwx = false LIMIT 32'''
+        delete_ids = []
+        sql_twx_data = []
+        with sqlite3.connect(database = dbase) as db:
+            cur = db.cursor()  
+            cur.execute(''' CREATE TABLE if not exists sanitrend (TwxData text, SentToTwx integer) ''')
+            cur.execute(select_query)  
+            records = cur.fetchall()
+            for row in records:
+                delete_ids.append(row[0])
+                twx_data = json.loads(row[1])
+                for dict in twx_data:
+                    sql_twx_data.append(dict)
+
+            response = await twx_request('update_tag_values', url, 'status', sql_twx_data)
+            if response == 200:
+                delete_query = ''' DELETE FROM sanitrend where ROWID=? '''
+                for id in delete_ids:
+                    cur.execute(delete_query, (id,))
+                db.commit()
+            
+            return response
+
 
 
 
@@ -70,6 +98,7 @@ class STC:
     plc = PLC()
     plc_data: list = field(default_factory = list)
     plc_data_buffer: list = field(default_factory = list)
+    plc_delta_data: list = field(default_factory = list)
     plc_tag_list: list = field(default_factory = list)
     plc_tag_delta: float = 0.25
     plc_ip_address: str = ''
@@ -81,7 +110,9 @@ class STC:
     twx_connected: bool = False
     twx_last_conn_test: int = 0
     twx_conn_fail_count: int = 0
+    twx_upload_data: list = field(default_factory = list)
     db_busy: bool = False
+    database: str = os.path.join(os.path.dirname(__file__), "stc.db")
     
 
     def __post_init__(self) -> None:
@@ -156,7 +187,7 @@ class STC:
         upload_data = []
         for tag_data in self.plc_data:
             add_tag = True
-            for old_data in self.plc_data_buffer:
+            for old_data in self.plc_delta_data:
                 tag_name = old_data['TagName']
                 if tag_data.TagName == tag_name:
                     add_tag = False
@@ -171,7 +202,7 @@ class STC:
                     'Status': tag_data.Status
                 }
 
-                self.plc_data_buffer.append(data_to_add)
+                self.plc_delta_data.append(data_to_add)
                 new_data.append(tag_data)
 
         if new_data:
@@ -207,38 +238,43 @@ class STC:
             
             if self.twx_connected:
                 url = f'/Thingworx/Things/{self.smi_number}/Services/UpdatePropertyValues'
-                response = await twx_request('update_tag_values', url, 'status', upload_data)
+                for item in upload_data:
+                        self.twx_upload_data.append(item)
+                response = await twx_request('update_tag_values', url, 'status', self.twx_upload_data)
                 if response != 200 and not self.db_busy:
                     self.db_busy = True
-                    SaniTrendDatabase.log_twx_data_to_db(upload_data)
+                    SaniTrendDatabase.log_twx_data_to_db(self.twx_upload_data, self.database)
+                    self.twx_upload_data = []
+                    await SaniTrendDatabase.upload_twx_data_from_db(self.database, url)
                     self.db_busy = False
+                    
             else:
                 if not self.db_busy:
                     self.db_busy = True
-                    SaniTrendDatabase.log_twx_data_to_db(upload_data)
+                    SaniTrendDatabase.log_twx_data_to_db(self.twx_upload_data, self.database)
                     self.db_busy = False
         
 
     def upload_twx_data_from_db() -> None:
-        dbase = os.path.join(os.path.dirname(__file__), "stc.db")
-        select_query = '''select ROWID,TwxData,SentToTwx from sanitrend where SentToTwx = false LIMIT 32'''
-        delete_ids = []
-        sql_twx_data = []
-        with sqlite3.connect(database = dbase) as db:
-            cur = db.cursor()  
-            cur.execute(''' CREATE TABLE if not exists sanitrend (TwxData text, SentToTwx integer) ''')
-            cur.execute(select_query)  
-            records = cur.fetchall()
-            for row in records:
-                delete_ids.append(row[0])
-                twx_data = json.loads(row[1])
-                for dict in twx_data:
-                    sql_twx_data.append(dict)
+        # dbase = os.path.join(os.path.dirname(__file__), "stc.db")
+        # select_query = '''select ROWID,TwxData,SentToTwx from sanitrend where SentToTwx = false LIMIT 32'''
+        # delete_ids = []
+        # sql_twx_data = []
+        # with sqlite3.connect(database = dbase) as db:
+        #     cur = db.cursor()  
+        #     cur.execute(''' CREATE TABLE if not exists sanitrend (TwxData text, SentToTwx integer) ''')
+        #     cur.execute(select_query)  
+        #     records = cur.fetchall()
+        #     for row in records:
+        #         delete_ids.append(row[0])
+        #         twx_data = json.loads(row[1])
+        #         for dict in twx_data:
+        #             sql_twx_data.append(dict)
 
-            url = f'/Thingworx/Things/{self.smi_number}/Services/UpdatePropertyValues'
-            response = twx_request('update_tag_values', url, 'status', sql_twx_data)
+        #     url = f'/Thingworx/Things/{self.smi_number}/Services/UpdatePropertyValues'
+        #     response = twx_request('update_tag_values', url, 'status', sql_twx_data)
 
-
+        pass
     
                                   
 
