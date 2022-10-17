@@ -103,7 +103,6 @@ class STC:
     plc = PLC()
     plc_data: list = field(default_factory = list)
     plc_data_buffer: list = field(default_factory = list)
-    plc_delta_data: list = field(default_factory = list)
     plc_tag_list: list = field(default_factory = list)
     plc_tag_delta: float = 0.25
     plc_ip_address: str = ''
@@ -190,10 +189,9 @@ class STC:
 
     async def upload_tag_data_to_twx(self) -> None:
         new_data = []
-        upload_data = []
         for tag_data in self.plc_data:
             add_tag = True
-            for old_data in self.plc_delta_data:
+            for old_data in self.plc_data_buffer:
                 tag_name = old_data['TagName']
                 if tag_data.TagName == tag_name:
                     add_tag = False
@@ -208,7 +206,7 @@ class STC:
                     'Status': tag_data.Status
                 }
 
-                self.plc_delta_data.append(data_to_add)
+                self.plc_data_buffer.append(data_to_add)
                 new_data.append(tag_data)
 
         if new_data:
@@ -240,12 +238,10 @@ class STC:
                             'baseType': twx_basetype
                         }
                         
-                        upload_data.append(twx_value)
+                        self.twx_upload_data.append(twx_value)
             
             if self.twx_connected:
                 url = f'/Thingworx/Things/{self.smi_number}/Services/UpdatePropertyValues'
-                for item in upload_data:
-                        self.twx_upload_data.append(item)
                 response = await twx_request('update_tag_values', url, 'status', self.twx_upload_data)
                 if response != 200 and not self.db_busy:
                     self.db_busy = True
@@ -262,7 +258,7 @@ class STC:
                     self.db_busy = False
 
             else:
-                if not self.db_busy:
+                if not self.db_busy and self.twx_upload_data:
                     self.db_busy = True
                     success = SaniTrendDatabase.log_twx_data_to_db(self.twx_upload_data, self.database)
                     if success:
