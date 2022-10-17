@@ -56,6 +56,7 @@ class SaniTrendDatabase:
         select_query = '''select ROWID,TwxData,SentToTwx from sanitrend where SentToTwx = false LIMIT 32'''
         delete_ids = []
         sql_twx_data = []
+        full_url = f'http://localhost:8000{url}'
         try:
             with sqlite3.connect(database = dbase) as db:
                 cur = db.cursor()  
@@ -114,7 +115,7 @@ class SaniTrendDatabase:
                         'Content-Type' : 'application/json'
                     }
 
-                    http_response = session.post(url, headers = headers, json = json_data)
+                    http_response = session.post(full_url, headers = headers, json = json_data)
                     # response = await twx_request('update_tag_values', url, 'status', sql_twx_data)
                     if http_response.status_code == 200:
                         delete_query = ''' DELETE FROM sanitrend where ROWID=? '''
