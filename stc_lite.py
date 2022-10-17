@@ -8,6 +8,7 @@ from math import isinf
 import os
 import platform
 from pylogix import PLC, lgx_response
+import requests
 import sqlite3
 import sys
 import time
@@ -51,7 +52,7 @@ class SaniTrendDatabase:
         else:
             return True
 
-    async def upload_twx_data_from_db(dbase: str, url: str) -> int:
+    def upload_twx_data_from_db(dbase: str, url: str) -> int:
         select_query = '''select ROWID,TwxData,SentToTwx from sanitrend where SentToTwx = false LIMIT 32'''
         delete_ids = []
         sql_twx_data = []
@@ -65,14 +66,63 @@ class SaniTrendDatabase:
                     delete_ids.append(row[0])
                     sql_twx_data = json.loads(row[1])
                 
-                response = await twx_request('update_tag_values', url, 'status', sql_twx_data)
-                if response == 200:
-                    delete_query = ''' DELETE FROM sanitrend where ROWID=? '''
-                    for id in delete_ids:
-                        cur.execute(delete_query, (id,))
-                    db.commit()
+                with requests.Session() as session:
+                    values = {}
+                    values['rows'] = sql_twx_data
+                    values['dataShape'] = {
+                        'fieldDefinitions': {
+                            'name': {
+                                'name': 'name',
+                                'aspects': {
+                                    'isPrimaryKey': True
+                                },
+                            'description': 'Property name',
+                            'baseType': 'STRING',
+                            'ordinal': 0
+                            },
+                            'time': {
+                                'name': 'time',
+                                'aspects': {},
+                                'description': 'time',
+                                'baseType': 'DATETIME',
+                                'ordinal': 0
+                            },
+                            'value': {
+                                'name': 'value',
+                                'aspects': {},
+                                'description': 'value',
+                                'baseType': 'VARIANT',
+                                'ordinal': 0
+                            },
+                            'quality': {
+                                'name': 'quality',
+                                'aspects': {},
+                                'description': 'quality',
+                                'baseType': 'STRING',
+                                'ordinal': 0
+                            }
+                        }
+                    }
+
+                    json_data = {
+                        'values' : values
+                    }
+
+                    headers = {
+                        'Connection' : 'keep-alive',
+                        'Accept' : 'application/json',
+                        'Content-Type' : 'application/json'
+                    }
+
+                    http_response = session.post(url, headers = headers, json = json_data)
+                    # response = await twx_request('update_tag_values', url, 'status', sql_twx_data)
+                    if http_response.status_code == 200:
+                        delete_query = ''' DELETE FROM sanitrend where ROWID=? '''
+                        for id in delete_ids:
+                            cur.execute(delete_query, (id,))
+                        db.commit()
                 
-                return response
+                    return http_response
             
         except Exception as e:
             SaniTrendLogging.logger.error(repr(e))
