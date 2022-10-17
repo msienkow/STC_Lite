@@ -67,8 +67,8 @@ class SaniTrendDatabase:
                 response = await twx_request('update_tag_values', url, 'status', sql_twx_data)
                 if response == 200:
                     delete_query = ''' DELETE FROM sanitrend where ROWID=? '''
-                    for id in delete_ids:
-                        cur.execute(delete_query, (id,))
+                    # for id in delete_ids:
+                    #     cur.execute(delete_query, (id,))
                     db.commit()
                 
                 return response
