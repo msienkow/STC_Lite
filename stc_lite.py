@@ -61,22 +61,18 @@ class SaniTrendDatabase:
                 cur.execute(''' CREATE TABLE if not exists sanitrend (TwxData text, SentToTwx integer) ''')
                 cur.execute(select_query)  
                 records = cur.fetchall()
-                if records:
-                    for row in records:
-                        delete_ids.append(row[0])
-                        twx_data = json.loads(row[1])
-                        for dict in twx_data:
-                            sql_twx_data.append(dict)
-                    
-                    SaniTrendLogging.logger.info(sql_twx_data)
-                    response = await twx_request('update_tag_values', url, 'status', sql_twx_data)
-                    if response == 200:
-                        delete_query = ''' DELETE FROM sanitrend where ROWID=? '''
-                        # for id in delete_ids:
-                        #     cur.execute(delete_query, (id,))
-                        db.commit()
-                    
-                    return response
+                for row in records:
+                    delete_ids.append(row[0])
+                    sql_twx_data = json.loads(row[1])
+                
+                response = await twx_request('update_tag_values', url, 'status', sql_twx_data)
+                if response == 200:
+                    delete_query = ''' DELETE FROM sanitrend where ROWID=? '''
+                    for id in delete_ids:
+                        cur.execute(delete_query, (id,))
+                    db.commit()
+                
+                return response
             
         except Exception as e:
             SaniTrendLogging.logger.error(repr(e))
@@ -259,7 +255,7 @@ class STC:
                 elif response == 200:
                     self.twx_upload_data = []
                     self.db_busy = True
-                    await SaniTrendDatabase.upload_twx_data_from_db(self.database, url)
+                    upload_response = await SaniTrendDatabase.upload_twx_data_from_db(self.database, url)
                     self.db_busy = False
 
             else:
