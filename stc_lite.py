@@ -29,7 +29,7 @@ class SaniTrendLogging:
 class SaniTrendDatabase:
 
 
-    async def log_twx_data_to_db(data: list, dbase: str) -> bool:
+    def log_twx_data_to_db(data: list, dbase: str) -> bool:
         try:
             with sqlite3.connect(database = dbase) as db:
                 cur = db.cursor()
@@ -243,15 +243,24 @@ class STC:
                 response = await twx_request('update_tag_values', url, 'status', self.twx_upload_data)
                 if response != 200 and not self.db_busy:
                     self.db_busy = True
-                    SaniTrendDatabase.log_twx_data_to_db(self.twx_upload_data, self.database)
-                    self.twx_upload_data = []
+                    success = SaniTrendDatabase.log_twx_data_to_db(self.twx_upload_data, self.database)
+                    if success:
+                        self.twx_upload_data = []
+                    
+                    self.db_busy = False
+
+                elif response == 200:
+                    self.db_busy = True
                     await SaniTrendDatabase.upload_twx_data_from_db(self.database, url)
                     self.db_busy = False
-                    
+
             else:
                 if not self.db_busy:
                     self.db_busy = True
-                    SaniTrendDatabase.log_twx_data_to_db(self.twx_upload_data, self.database)
+                    success = SaniTrendDatabase.log_twx_data_to_db(self.twx_upload_data, self.database)
+                    if success:
+                        self.twx_upload_data = []
+
                     self.db_busy = False
         
 
