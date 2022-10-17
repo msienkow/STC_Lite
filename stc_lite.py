@@ -28,7 +28,6 @@ class SaniTrendLogging:
 @dataclass
 class SaniTrendDatabase:
     database: str = os.path.join(os.path.dirname(__file__), "stc.db")
-    db_busy: bool = False
 
     def log_twx_data_to_db(data: list, dbase: str = database) -> None:
         try:
@@ -42,29 +41,11 @@ class SaniTrendDatabase:
                 records.append((sql_as_text, False)) 
                 cur.executemany(insert_query, records)
                 db.commit()
-                SaniTrendDatabase.db_busy = True
-                print(SaniTrendDatabase.db_busy)
         except Exception as e:
             SaniTrendLogging.logger.error(repr(e))
     
 
-    def upload_twx_data_from_db(dbase: str = database, ) -> None:
-        select_query = '''select ROWID,TwxData,SentToTwx from sanitrend where SentToTwx = false LIMIT 32'''
-        delete_ids = []
-        sql_twx_data = []
-        with sqlite3.connect(database = dbase) as db:
-            cur = db.cursor()  
-            cur.execute(''' CREATE TABLE if not exists sanitrend (TwxData text, SentToTwx integer) ''')
-            cur.execute(select_query)  
-            records = cur.fetchall()
-            for row in records:
-                delete_ids.append(row[0])
-                twx_data = json.loads(row[1])
-                for dict in twx_data:
-                    sql_twx_data.append(dict)
 
-            url = f'/Thingworx/Things/{self.smi_number}/Services/UpdatePropertyValues'
-            response = twx_request('update_tag_values', url, 'status', sql_twx_data)
 
 @dataclass
 class SimpleTimer():
@@ -100,6 +81,7 @@ class STC:
     twx_connected: bool = False
     twx_last_conn_test: int = 0
     twx_conn_fail_count: int = 0
+    db_busy: bool = False
     
 
     def __post_init__(self) -> None:
@@ -222,14 +204,39 @@ class STC:
                         }
                         
                         upload_data.append(twx_value)
-            SaniTrendDatabase.log_twx_data_to_db(upload_data)
+            
             if self.twx_connected:
                 url = f'/Thingworx/Things/{self.smi_number}/Services/UpdatePropertyValues'
                 response = await twx_request('update_tag_values', url, 'status', upload_data)
-                if response != 200:
+                if response != 200 and not self.db_busy:
+                    self.db_busy = True
                     SaniTrendDatabase.log_twx_data_to_db(upload_data)
+                    self.db_busy = False
             else:
-                 SaniTrendDatabase.log_twx_data_to_db(upload_data)
+                if not self.db_busy:
+                    self.db_busy = True
+                    SaniTrendDatabase.log_twx_data_to_db(upload_data)
+                    self.db_busy = False
+        
+
+    def upload_twx_data_from_db() -> None:
+        dbase = os.path.join(os.path.dirname(__file__), "stc.db")
+        select_query = '''select ROWID,TwxData,SentToTwx from sanitrend where SentToTwx = false LIMIT 32'''
+        delete_ids = []
+        sql_twx_data = []
+        with sqlite3.connect(database = dbase) as db:
+            cur = db.cursor()  
+            cur.execute(''' CREATE TABLE if not exists sanitrend (TwxData text, SentToTwx integer) ''')
+            cur.execute(select_query)  
+            records = cur.fetchall()
+            for row in records:
+                delete_ids.append(row[0])
+                twx_data = json.loads(row[1])
+                for dict in twx_data:
+                    sql_twx_data.append(dict)
+
+            url = f'/Thingworx/Things/{self.smi_number}/Services/UpdatePropertyValues'
+            response = twx_request('update_tag_values', url, 'status', sql_twx_data)
 
 
     
@@ -402,7 +409,7 @@ async def twx_request(request_type: str, url: str, response_type: str = 'json', 
                 }
 
             try:
-                async with request_types[request_type](url, headers = headers, json = post_data, timeout = 5) as response:
+                async with request_types[request_type](url, headers = headers, json = post_data) as response:
                     response_json = await response.json(content_type=None)
                     if response_type == 'json':
                         if response.status == 200:
