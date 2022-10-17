@@ -64,15 +64,16 @@ class SaniTrendDatabase:
                 for row in records:
                     delete_ids.append(row[0])
                     sql_twx_data = json.loads(row[1])
-                print(len(sql_twx_data))
-                response = await twx_request('update_tag_values', url, 'status', sql_twx_data)
-                if response.status_code == 200:
-                    delete_query = ''' DELETE FROM sanitrend where ROWID=? '''
-                    for id in delete_ids:
-                        cur.execute(delete_query, (id,))
-                    db.commit()
-            
-                return response
+                
+                if len(sql_twx_data) > 0:
+                    response = await twx_request('update_tag_values', url, 'status', sql_twx_data)
+                    if response == 200:
+                        delete_query = ''' DELETE FROM sanitrend where ROWID=? '''
+                        for id in delete_ids:
+                            cur.execute(delete_query, (id,))
+                        db.commit()
+                
+                    return response
             
         except Exception as e:
             SaniTrendLogging.logger.error(repr(e))
