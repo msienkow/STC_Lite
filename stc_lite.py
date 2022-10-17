@@ -52,25 +52,30 @@ class SaniTrendDatabase:
         select_query = '''select ROWID,TwxData,SentToTwx from sanitrend where SentToTwx = false LIMIT 32'''
         delete_ids = []
         sql_twx_data = []
-        with sqlite3.connect(database = dbase) as db:
-            cur = db.cursor()  
-            cur.execute(''' CREATE TABLE if not exists sanitrend (TwxData text, SentToTwx integer) ''')
-            cur.execute(select_query)  
-            records = cur.fetchall()
-            for row in records:
-                delete_ids.append(row[0])
-                twx_data = json.loads(row[1])
-                for dict in twx_data:
-                    sql_twx_data.append(dict)
+        try:
+            with sqlite3.connect(database = dbase) as db:
+                cur = db.cursor()  
+                cur.execute(''' CREATE TABLE if not exists sanitrend (TwxData text, SentToTwx integer) ''')
+                cur.execute(select_query)  
+                records = cur.fetchall()
+                for row in records:
+                    delete_ids.append(row[0])
+                    twx_data = json.loads(row[1])
+                    for dict in twx_data:
+                        sql_twx_data.append(dict)
 
-            response = await twx_request('update_tag_values', url, 'status', sql_twx_data)
-            if response == 200:
-                delete_query = ''' DELETE FROM sanitrend where ROWID=? '''
-                for id in delete_ids:
-                    cur.execute(delete_query, (id,))
-                db.commit()
+                response = await twx_request('update_tag_values', url, 'status', sql_twx_data)
+                if response == 200:
+                    delete_query = ''' DELETE FROM sanitrend where ROWID=? '''
+                    for id in delete_ids:
+                        cur.execute(delete_query, (id,))
+                    db.commit()
+                
+                return response
             
-            return response
+        except Exception as e:
+            SaniTrendLogging.logger.error(repr(e))
+            return 404
 
 
 
@@ -264,29 +269,6 @@ class STC:
                         self.twx_upload_data = []
 
                     self.db_busy = False
-        
-
-    def upload_twx_data_from_db() -> None:
-        # dbase = os.path.join(os.path.dirname(__file__), "stc.db")
-        # select_query = '''select ROWID,TwxData,SentToTwx from sanitrend where SentToTwx = false LIMIT 32'''
-        # delete_ids = []
-        # sql_twx_data = []
-        # with sqlite3.connect(database = dbase) as db:
-        #     cur = db.cursor()  
-        #     cur.execute(''' CREATE TABLE if not exists sanitrend (TwxData text, SentToTwx integer) ''')
-        #     cur.execute(select_query)  
-        #     records = cur.fetchall()
-        #     for row in records:
-        #         delete_ids.append(row[0])
-        #         twx_data = json.loads(row[1])
-        #         for dict in twx_data:
-        #             sql_twx_data.append(dict)
-
-        #     url = f'/Thingworx/Things/{self.smi_number}/Services/UpdatePropertyValues'
-        #     response = twx_request('update_tag_values', url, 'status', sql_twx_data)
-
-        pass
-    
                                   
 
     async def get_twx_connection_status(self) -> None:
