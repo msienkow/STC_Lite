@@ -25,14 +25,14 @@ class SaniTrendLogging:
 
 
 
-
+@dataclass
 class SaniTrendDatabase:
-    database = os.path.join(os.path.dirname(__file__), "stc.db")
+    database: str = os.path.join(os.path.dirname(__file__), "stc.db")
+    db_busy: bool = False
 
-
-    def log_twx_data_to_db(data: list, dbase: str = database):
+    def log_twx_data_to_db(data: list, dbase: str = database) -> None:
         try:
-            with sqlite3.connect(database=dbase) as db:
+            with sqlite3.connect(database = dbase) as db:
                 cur = db.cursor()
                 cur.execute(''' CREATE TABLE if not exists sanitrend (TwxData text, SentToTwx integer) ''')   
                 records = []     
@@ -42,11 +42,29 @@ class SaniTrendDatabase:
                 records.append((sql_as_text, False)) 
                 cur.executemany(insert_query, records)
                 db.commit()
-
+                SaniTrendDatabase.db_busy = True
+                print(SaniTrendDatabase.db_busy)
         except Exception as e:
             SaniTrendLogging.logger.error(repr(e))
     
 
+    def upload_twx_data_from_db(dbase: str = database, ) -> None:
+        select_query = '''select ROWID,TwxData,SentToTwx from sanitrend where SentToTwx = false LIMIT 32'''
+        delete_ids = []
+        sql_twx_data = []
+        with sqlite3.connect(database = dbase) as db:
+            cur = db.cursor()  
+            cur.execute(''' CREATE TABLE if not exists sanitrend (TwxData text, SentToTwx integer) ''')
+            cur.execute(select_query)  
+            records = cur.fetchall()
+            for row in records:
+                delete_ids.append(row[0])
+                twx_data = json.loads(row[1])
+                for dict in twx_data:
+                    sql_twx_data.append(dict)
+
+            url = f'/Thingworx/Things/{self.smi_number}/Services/UpdatePropertyValues'
+            response = twx_request('update_tag_values', url, 'status', sql_twx_data)
 
 @dataclass
 class SimpleTimer():
@@ -55,6 +73,7 @@ class SimpleTimer():
     preset: int = field(repr = False)
     done: bool = field(init=False)
     timestamp: int = field(init=False)
+
 
     def __post_init__(self):
         self.timestamp = int(round(time.time() * 1000))
@@ -67,7 +86,6 @@ class SimpleTimer():
 class STC:
     config_file: str = 'SaniTrendConfig.json'
     smi_number: str = ''
-
     plc = PLC()
     plc_data: list = field(default_factory = list)
     plc_data_buffer: list = field(default_factory = list)
@@ -76,10 +94,8 @@ class STC:
     plc_ip_address: str = ''
     plc_scan_rate: int = 1000
     plc_last_scan_time: int = 0
-
     remote_plc_config: list = field(default_factory = list)
     remote_plc_last_config_time: int = 0
- 
     twx_tag_table: list = field(default_factory = list)
     twx_connected: bool = False
     twx_last_conn_test: int = 0
@@ -207,8 +223,16 @@ class STC:
                         
                         upload_data.append(twx_value)
             SaniTrendDatabase.log_twx_data_to_db(upload_data)
-            url = f'/Thingworx/Things/{self.smi_number}/Services/UpdatePropertyValues'
-            response = await twx_request('update_tag_values', url, 'status', upload_data)
+            if self.twx_connected:
+                url = f'/Thingworx/Things/{self.smi_number}/Services/UpdatePropertyValues'
+                response = await twx_request('update_tag_values', url, 'status', upload_data)
+                if response != 200:
+                    SaniTrendDatabase.log_twx_data_to_db(upload_data)
+            else:
+                 SaniTrendDatabase.log_twx_data_to_db(upload_data)
+
+
+    
                                   
 
     async def get_twx_connection_status(self) -> None:
@@ -378,7 +402,7 @@ async def twx_request(request_type: str, url: str, response_type: str = 'json', 
                 }
 
             try:
-                async with request_types[request_type](url, headers = headers, json = post_data) as response:
+                async with request_types[request_type](url, headers = headers, json = post_data, timeout = 5) as response:
                     response_json = await response.json(content_type=None)
                     if response_type == 'json':
                         if response.status == 200:
@@ -411,25 +435,25 @@ async def twx_request(request_type: str, url: str, response_type: str = 'json', 
 
 
 async def main():
-    write_counter = 0
-    test = STC()
+    stc = STC()
     while True:
-        if test.plc_scan_timer():
-            asyncio.create_task(test.get_twx_connection_status())
-            asyncio.create_task(test.get_remote_plc_config())
-            for tag in test.plc_tag_list:
-                asyncio.create_task(test.read_tags(tag))
+        if stc.plc_scan_timer():
+            asyncio.create_task(stc.get_twx_connection_status())
+            asyncio.create_task(stc.get_remote_plc_config())
+            for tag in stc.plc_tag_list:
+                asyncio.create_task(stc.read_tags(tag))
             
             comms = []
-            comms.append(('SaniTrend_Watchdog', get_tag_value(test.plc_data, 'PLC_Watchdog')))
-            comms.append(('Twx_Alarm', not test.twx_connected))
-            asyncio.create_task(test.write_tags(comms))
+            plc_watchdog = get_tag_value(stc.plc_data, 'PLC_Watchdog')
+            comms.append(('SaniTrend_Watchdog', plc_watchdog))
+            comms.append(('Twx_Alarm', not stc.twx_connected))
+            if isinstance(plc_watchdog, bool): 
+                asyncio.create_task(stc.write_tags(comms))
 
+            if stc.remote_plc_config:
+                asyncio.create_task(stc.write_tags(stc.remote_plc_config))
 
-            if test.remote_plc_config:
-                asyncio.create_task(test.write_tags(test.remote_plc_config))
-
-            asyncio.create_task(test.upload_tag_data_to_twx())
+            asyncio.create_task(stc.upload_tag_data_to_twx())
         
         await asyncio.sleep(0.1)
 
