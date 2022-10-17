@@ -64,7 +64,7 @@ class SaniTrendDatabase:
                 for row in records:
                     delete_ids.append(row[0])
                     sql_twx_data = json.loads(row[1])
-                print(type(sql_twx_data))    
+                print(len(sql_twx_data))
                 response = await twx_request('update_tag_values', url, 'status', sql_twx_data)
                 if response.status_code == 200:
                     delete_query = ''' DELETE FROM sanitrend where ROWID=? '''
