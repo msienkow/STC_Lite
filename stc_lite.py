@@ -250,6 +250,7 @@ class STC:
                     self.db_busy = False
 
                 elif response == 200:
+                    self.twx_upload_data = []
                     self.db_busy = True
                     await SaniTrendDatabase.upload_twx_data_from_db(self.database, url)
                     self.db_busy = False
