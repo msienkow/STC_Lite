@@ -30,23 +30,26 @@ class SaniTrendDatabase:
 
 
     def log_twx_data_to_db(data: list, dbase: str) -> bool:
-        try:
-            with sqlite3.connect(database = dbase) as db:
-                cur = db.cursor()
-                cur.execute(''' CREATE TABLE if not exists sanitrend (TwxData text, SentToTwx integer) ''')   
-                records = []     
-                sql_as_text = ''
-                insert_query = ''' INSERT INTO sanitrend (TwxData, SentToTwx) VALUES (?,?); '''
-                sql_as_text = json.dumps(data)
-                records.append((sql_as_text, False)) 
-                cur.executemany(insert_query, records)
-                db.commit()
+        if data:
+            try:
+                with sqlite3.connect(database = dbase) as db:
+                    cur = db.cursor()
+                    cur.execute(''' CREATE TABLE if not exists sanitrend (TwxData text, SentToTwx integer) ''')   
+                    records = []     
+                    sql_as_text = ''
+                    insert_query = ''' INSERT INTO sanitrend (TwxData, SentToTwx) VALUES (?,?); '''
+                    sql_as_text = json.dumps(data)
+                    records.append((sql_as_text, False)) 
+                    cur.executemany(insert_query, records)
+                    db.commit()
+                    return True
+            
+            except Exception as e:
+                SaniTrendLogging.logger.error(repr(e))
                 return True
-        
-        except Exception as e:
-            SaniTrendLogging.logger.error(repr(e))
-            return False
-    
+
+        else:
+            return True
 
     async def upload_twx_data_from_db(dbase: str, url: str) -> int:
         select_query = '''select ROWID,TwxData,SentToTwx from sanitrend where SentToTwx = false LIMIT 32'''
