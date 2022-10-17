@@ -70,6 +70,7 @@ class SaniTrendDatabase:
                     for id in delete_ids:
                         cur.execute(delete_query, (id,))
                     db.commit()
+                    SaniTrendLogging.logger.info(response)
                 
                 return response
             
