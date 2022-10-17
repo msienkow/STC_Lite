@@ -8,7 +8,6 @@ from math import isinf
 import os
 import platform
 from pylogix import PLC, lgx_response
-import requests
 import sqlite3
 import sys
 import time
@@ -256,7 +255,7 @@ class STC:
                 elif response == 200:
                     self.twx_upload_data = []
                     self.db_busy = True
-                    upload_response = SaniTrendDatabase.upload_twx_data_from_db(self.database, url)
+                    upload_response = await SaniTrendDatabase.upload_twx_data_from_db(self.database, url)
                     self.db_busy = False
 
             else:
