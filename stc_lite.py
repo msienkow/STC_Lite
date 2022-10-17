@@ -224,23 +224,22 @@ class STC:
                         twx_basetype = twx_config['twxtype']
                         break
                 
-                if twx_tag:
-                    if twx_basetype.lower() != ignore_type:
-                        tag_value = item.Value
-                        twx_tag_value = round(tag_value,2) if isinstance(tag_value, float) else tag_value
-                        twx_value['time'] = timestamp
-                        twx_value['quality'] = 'GOOD'
-                        twx_value['name'] = twx_tag        
-                        if twx_basetype == 'NUMBER' and isinf(tag_value):
-                            twx_tag_value = -9999
-                            twx_value['quality'] = 'BAD'
+                if twx_tag and twx_basetype.lower() != ignore_type:
+                    tag_value = item.Value
+                    twx_tag_value = round(tag_value,2) if isinstance(tag_value, float) else tag_value
+                    twx_value['time'] = timestamp
+                    twx_value['quality'] = 'GOOD'
+                    twx_value['name'] = twx_tag
+                    if twx_basetype == 'NUMBER' and isinf(tag_value):
+                        twx_tag_value = -9999
+                        twx_value['quality'] = 'BAD'
 
-                        twx_value['value'] = {
-                            'value': twx_tag_value,
-                            'baseType': twx_basetype
-                        }
-                        
-                        self.twx_upload_data.append(twx_value)
+                    twx_value['value'] = {
+                        'value': twx_tag_value,
+                        'baseType': twx_basetype
+                    }
+                    
+                    self.twx_upload_data.append(twx_value)
             
             if self.twx_connected:
                 url = f'/Thingworx/Things/{self.smi_number}/Services/UpdatePropertyValues'
