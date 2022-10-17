@@ -61,7 +61,7 @@ class SaniTrendDatabase:
                 cur.execute(''' CREATE TABLE if not exists sanitrend (TwxData text, SentToTwx integer) ''')
                 cur.execute(select_query)  
                 records = cur.fetchall()
-                if len(records) > 0:
+                if records:
                     for row in records:
                         delete_ids.append(row[0])
                         twx_data = json.loads(row[1])
