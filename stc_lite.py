@@ -61,20 +61,22 @@ class SaniTrendDatabase:
                 cur.execute(''' CREATE TABLE if not exists sanitrend (TwxData text, SentToTwx integer) ''')
                 cur.execute(select_query)  
                 records = cur.fetchall()
-                for row in records:
-                    delete_ids.append(row[0])
-                    twx_data = json.loads(row[1])
-                    for dict in twx_data:
-                        sql_twx_data.append(dict)
-                print(sql_twx_data)
-                response = await twx_request('update_tag_values', url, 'status', sql_twx_data)
-                if response == 200:
-                    delete_query = ''' DELETE FROM sanitrend where ROWID=? '''
-                    # for id in delete_ids:
-                    #     cur.execute(delete_query, (id,))
-                    db.commit()
-                
-                return response
+                if len(records) > 0:
+                    for row in records:
+                        delete_ids.append(row[0])
+                        twx_data = json.loads(row[1])
+                        for dict in twx_data:
+                            sql_twx_data.append(dict)
+                    
+                    SaniTrendLogging.logger.info(sql_twx_data)
+                    response = await twx_request('update_tag_values', url, 'status', sql_twx_data)
+                    if response == 200:
+                        delete_query = ''' DELETE FROM sanitrend where ROWID=? '''
+                        # for id in delete_ids:
+                        #     cur.execute(delete_query, (id,))
+                        db.commit()
+                    
+                    return response
             
         except Exception as e:
             SaniTrendLogging.logger.error(repr(e))
@@ -437,7 +439,7 @@ async def twx_request(request_type: str, url: str, response_type: str = 'json', 
                 }
 
             try:
-                async with request_types[request_type](url, headers = headers, json = post_data) as response:
+                async with request_types[request_type](url, headers = headers, json = post_data, timeout = 5) as response:
                     response_json = await response.json(content_type=None)
                     if response_type == 'json':
                         if response.status == 200:
