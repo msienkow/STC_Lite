@@ -145,23 +145,24 @@ class STC:
 
     async def read_tags(self, tag: str = '') -> None:
         new_data = await self.read_tag_data(tag)
-        if isinstance(new_data.Value, float):
-            new_data.Value = round(new_data.Value, 2)    
+        if not isinstance(new_data, None):
+            if isinstance(new_data.Value, float):
+                new_data.Value = round(new_data.Value, 2)    
 
-        add_data = True
-        for old_data in self.plc_data:
-            if old_data.TagName == new_data.TagName:
-                add_data = False
-                if isinstance(new_data.Value, float):
-                    if abs(old_data.Value - new_data.Value) >= self.plc_tag_delta:
-                        old_data.Value = new_data.Value
+            add_data = True
+            for old_data in self.plc_data:
+                if old_data.TagName == new_data.TagName:
+                    add_data = False
+                    if isinstance(new_data.Value, float):
+                        if abs(old_data.Value - new_data.Value) >= self.plc_tag_delta:
+                            old_data.Value = new_data.Value
 
-                else:
-                    if old_data.Value != new_data.Value:
-                        old_data.Value = new_data.Value
+                    else:
+                        if old_data.Value != new_data.Value:
+                            old_data.Value = new_data.Value
 
-        if add_data:
-            self.plc_data.append(new_data)
+            if add_data:
+                self.plc_data.append(new_data)
         
 
     async def read_tag_data(self, tags: list = []) -> lgx_response:
