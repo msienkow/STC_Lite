@@ -153,8 +153,7 @@ class STC:
 
     async def read_tags(self, tag: str = '') -> None:
         new_data = await self.read_tag_data(tag)
-        if new_data:
-            print(type(new_data))
+        if not isinstance(new_data, None):
             if isinstance(new_data.Value, float):
                 new_data.Value = round(new_data.Value, 2)    
 
