@@ -9,13 +9,14 @@ import os
 import platform
 from pylogix import PLC, lgx_response
 import sqlite3
-import sys
 import time
 
 
 
 
 class SaniTrendLogging:
+    """Class for automatic logging
+    """
     logger = logging.getLogger("STC_Logs")
     logger.setLevel(logging.DEBUG)
     logger_formatter = logging.Formatter("%(levelname)s %(asctime)s: %(funcName)s @ line %(lineno)d - %(message)s")
@@ -27,9 +28,20 @@ class SaniTrendLogging:
 
 @dataclass
 class SaniTrendDatabase:
+    """Class for dealing with Sqlite3 database
+    """
 
 
     def log_twx_data_to_db(data: list, dbase: str) -> bool:
+        """Logs Thingworx data to SQLite3 database.
+
+        Args:
+            data (list): List of Thingworx data with proper formatting.
+            dbase (str): Name of database
+
+        Returns:
+            bool: True if database operation was successful, else False
+        """
         if data:
             try:
                 with sqlite3.connect(database = dbase) as db:
@@ -46,12 +58,21 @@ class SaniTrendDatabase:
             
             except Exception as e:
                 SaniTrendLogging.logger.error(repr(e))
-                return True
+                return False
 
         else:
-            return True
+            return False
 
     async def upload_twx_data_from_db(dbase: str, url: str) -> int:
+        """Queries SQLite database for Thingworx data that needs to be uploaded and uploads it.
+
+        Args:
+            dbase (str): name of database file
+            url (str): url of Thingworx "Thing" UpdatePropertyValues service.
+
+        Returns:
+            int: http response from REST call to Thingworx
+        """
         select_query = '''select ROWID,TwxData,SentToTwx from sanitrend where SentToTwx = false LIMIT 32'''
         delete_ids = []
         sql_twx_data = []
@@ -83,7 +104,7 @@ class SaniTrendDatabase:
 
 
 @dataclass
-class SimpleTimer():
+class SimpleTimer:
     '''Simple timer class that mimics a PLC timer instruction.'''
     compare_time: int = field(repr = False)
     preset: int = field(repr = False)
@@ -100,6 +121,11 @@ class SimpleTimer():
 
 @dataclass
 class STC:
+    """SaniTrend™ Cloud Lite Class
+
+    Returns:
+        None: None
+    """
     config_file: str = 'SaniTrendConfig.json'
     smi_number: str = ''
     plc = PLC()
@@ -150,7 +176,17 @@ class STC:
 
 
     async def read_tags(self, tag: str = '') -> None:
-        new_data = await self.read_tag_data(tag)
+        """Asyncio wrapper for reading tags using Pylogix
+
+        Args:
+            tag (str, optional): Tag name in PLC (must be global scoped). Defaults to ''.
+        """
+        try: 
+            new_data = await self.read_tag_data(tag)
+        
+        except Exception as e:
+            SaniTrendLogging.logger.error(repr(e))
+            
         if new_data:
             if isinstance(new_data.Value, float):
                 new_data.Value = round(new_data.Value, 2)    
@@ -172,10 +208,23 @@ class STC:
         
 
     async def read_tag_data(self, tags: list = []) -> lgx_response:
+        """Asyncio wrapper for reading plc tags using Pylogix
+
+        Args:
+            tags (list, optional): list of tags. Defaults to [].
+
+        Returns:
+            lgx_response: returns TagName, Value, and Status of tag.
+        """
         return self.plc.Read(tags)
 
 
-    async def write_tags(self, tag_list):
+    async def write_tags(self, tag_list: list = []) -> None:
+        """Asyncio wrapper for writing tag values to PLC
+
+        Args:
+            tag_list (list, optional): list of tuples containing tagnames and values. Defaults to [].
+        """
         try:
             for tag in tag_list:
                 x = await self.write_tag_data(tag)
@@ -184,12 +233,22 @@ class STC:
             SaniTrendLogging.logger.error(repr(e))
 
 
-    async def write_tag_data(self, tag):
+    async def write_tag_data(self, tag) -> None:
+        """Asyncio wrapper for writing tag data using Pylogix
+
+        Args:
+            tag (tuple): tuple of TagName and Value
+
+        Returns:
+            None: None
+        """
         tag_name, tag_value = tag
-        return self.plc.Write(tag_name, tag_value)
+        self.plc.Write(tag_name, tag_value)
 
 
     async def upload_tag_data_to_twx(self) -> None:
+        """Uploads plc tag data to Thingworx
+        """
         new_data = []
         for tag_data in self.plc_data:
             add_tag = True
@@ -269,6 +328,8 @@ class STC:
                                   
 
     async def get_twx_connection_status(self) -> None:
+        """Gets connection status of PC to Thingworx
+        """
         timer = SimpleTimer(self.twx_last_conn_test, 10000)
         url = '/Thingworx/Things/LocalEms/Properties/isConnected'
         if timer.done:
@@ -286,7 +347,9 @@ class STC:
                     self.twx_last_conn_test += 60000
 
 
-    async def get_remote_plc_config(self):
+    async def get_stc_config(self):
+        """Gets configuration data from Thingworx
+        """
         url = f'/Thingworx/Things/{self.smi_number}/Services/GetPropertyValues'
         timer = SimpleTimer(self.remote_plc_last_config_time, 10000)
         if timer.done and self.twx_connected:
@@ -352,25 +415,48 @@ class STC:
                 self.remote_plc_config.append(('Virtualize_DIn', result['Virtualize_DIn']))
                 self.remote_plc_config.append(('Virtualize_String', result['Virtualize_String']))
 
+        asyncio.create_task(self.write_tags(self.remote_plc_config))
 
 
 
-def reboot_pc(self,):
-        platform = platform.system().lower()
-        if platform == 'windows':
-            os.system('shutdown /r /t 1')
-        elif platform == 'linux':
-            os.system('sudo reboot')
+def reboot_pc() -> None:
+    operating_system = platform.system().lower()
+    if operating_system == 'windows':
+        os.system('shutdown /r /t 1')
 
+    elif operating_system == 'linux':
+        os.system('sudo reboot')
+        
 
 def get_tag_value(tag_data: list = [], tag_name: str = '') -> any:
+    """Gets tag value given list of tag data from pylogix
+
+    Args:
+        tag_data (list, optional): list of tag data from Pylogix. Defaults to [].
+        tag_name (str, optional): name of tag from which to get the value. Defaults to ''.
+
+    Returns:
+        any: value of tag
+    """
     if tag_data and tag_name:
         values = (tag.Value for tag in tag_data if tag.TagName == tag_name)
         for value in values:
             return value
 
 
-async def twx_request(request_type: str, url: str, response_type: str = 'json', data: list = [], timeout: int = 5):
+async def twx_request(request_type: str, url: str, response_type: str = 'json', data: list = [], timeout: int = 5) -> any:
+    """Process Thingworx REST requests
+
+    Args:
+        request_type (str): type of request being made
+        url (str): url of REST request
+        response_type (str, optional): 'json' data from REST request, or http 'status' of REST request. Defaults to 'json'.
+        data (list, optional): data for POST requests. Defaults to [].
+        timeout (int, optional): http timeout. Defaults to 5.
+
+    Returns:
+        any: json or status depending on 'response_type'
+    """
     new_data =  []
     if data:
         new_data = data.copy()
@@ -472,7 +558,7 @@ async def main():
     while True:
         if stc.plc_scan_timer():
             asyncio.create_task(stc.get_twx_connection_status())
-            asyncio.create_task(stc.get_remote_plc_config())
+            asyncio.create_task(stc.get_stc_config())
             for tag in stc.plc_tag_list:
                 asyncio.create_task(stc.read_tags(tag))
             
