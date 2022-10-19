@@ -1,4 +1,5 @@
 import asyncio
+from types import NoneType
 import aiohttp
 from dataclasses import dataclass, field
 import json
@@ -84,7 +85,9 @@ class SaniTrendDatabase:
                 records = cur.fetchall()
                 for row in records:
                     delete_ids.append(row[0])
-                    sql_twx_data = json.loads(row[1])
+                    sql_data = json.loads(row[1])
+                    for item in sql_data:
+                        sql_twx_data.append(item)
                 
                 if len(sql_twx_data) > 0:
                     response = await twx_request('update_tag_values', url, 'status', sql_twx_data)
