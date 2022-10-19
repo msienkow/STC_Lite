@@ -38,6 +38,7 @@ async def main():
 
             reboot = stc_lite.get_tag_value(sanitrend_cloud_lite.plc_data, 'Reboot')
             if reboot:
+                run_code = False
                 reboot_data = []
                 reboot_data.append(('Reboot_Response', 2))
                 asyncio.sleep(5)
