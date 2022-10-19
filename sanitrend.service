@@ -1,0 +1,15 @@
+[Unit]
+Description=SaniTrend Cloud Lite
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /home/sanimatic/STC_Lite/stc.py
+WorkingDirectory=/home/sanimatic/STC_Lite/
+StandardOutput=inherit
+StandardError=inherit
+Restart=always
+User=sanimatic
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,8 +1,8 @@
 {
     "Config": {
-        "PLCIPAddress": "10.10.135.173",
+        "PLCIPAddress": "PLC_IP_Address",
         "PLCScanRate" : "1000",
-        "SMINumber": "9999"
+        "SMINumber": "ThingName"
     },
     "Tags": [
         {
