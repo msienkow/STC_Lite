@@ -7,7 +7,6 @@ async def main():
     sanitrend_cloud_lite = stc_lite.STC()
     run_code = True
     plc_watchdog_buffer = False
-    twx_alarm_buffer = True
 
     while run_code:
         try:
@@ -18,21 +17,20 @@ async def main():
                     asyncio.create_task(sanitrend_cloud_lite.read_tags(tag))
                 
                 plc_watchdog = stc_lite.get_tag_value(sanitrend_cloud_lite.plc_data, 'PLC_Watchdog')
-                twx_alarm = not sanitrend_cloud_lite.twx_connected
+                sanitrend_watchdog = stc_lite.get_tag_value(sanitrend_cloud_lite.plc_data, 'SaniTrend_Watchdog')
+                thingworx_alarm = stc_lite.get_tag_value(sanitrend_cloud_lite.plc_data, 'Twx_Alarm')
+                thingworx_alarm_status = not sanitrend_cloud_lite.twx_connected
                 comms_data = []
-                if plc_watchdog != plc_watchdog_buffer:
+                if sanitrend_watchdog != plc_watchdog:
                     comms_data.append(('SaniTrend_Watchdog', plc_watchdog))
-                    plc_watchdog_buffer = plc_watchdog
 
-                if twx_alarm != twx_alarm_buffer:
-                    comms_data.append(('Twx_Alarm', twx_alarm))
-                    twx_alarm_buffer = twx_alarm
+                if thingworx_alarm != thingworx_alarm_status:
+                    comms_data.append(('Twx_Alarm', thingworx_alarm_status))
                 
                 if len(comms_data) > 0:
                     asyncio.create_task(sanitrend_cloud_lite.write_tags(comms_data))
 
                 asyncio.create_task(sanitrend_cloud_lite.upload_tag_data_to_twx())
-
             
             await asyncio.sleep(0.5)
 
