@@ -1,5 +1,4 @@
 import asyncio
-from types import NoneType
 import aiohttp
 from dataclasses import dataclass, field
 import json
