@@ -115,7 +115,7 @@
         },
         {
             "tag": "TWX_Alarm",
-            "twxtype": "IGNORE_TYPE"        
+            "twxtype": "IGNORE"        
         }
 
     ]
