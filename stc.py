@@ -40,7 +40,7 @@ async def main():
                 reboot_data = []
                 reboot_data.append(('Reboot_Response', 2))
                 asyncio.create_task(sanitrend_cloud_lite.write_tags(reboot_data))
-                asyncio.sleep(5)
+                await asyncio.sleep(5)
                 stc_lite.reboot_pc()
 
         except KeyboardInterrupt:
