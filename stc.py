@@ -2,11 +2,9 @@ import asyncio
 import stc_lite
 
 
-
 async def main():
     sanitrend_cloud_lite = stc_lite.STC()
     run_code = True
-    plc_watchdog_buffer = False
 
     while run_code:
         try:
@@ -22,10 +20,12 @@ async def main():
                 thingworx_alarm_status = not sanitrend_cloud_lite.twx_connected
                 comms_data = []
                 if sanitrend_watchdog != plc_watchdog:
-                    comms_data.append(('SaniTrend_Watchdog', plc_watchdog))
+                    if sanitrend_watchdog is not None and plc_watchdog is not None:
+                        comms_data.append(('SaniTrend_Watchdog', plc_watchdog))
 
                 if thingworx_alarm != thingworx_alarm_status:
-                    comms_data.append(('Twx_Alarm', thingworx_alarm_status))
+                    if thingworx_alarm is not None:
+                        comms_data.append(('Twx_Alarm', thingworx_alarm_status))
                 
                 if len(comms_data) > 0:
                     asyncio.create_task(sanitrend_cloud_lite.write_tags(comms_data))
