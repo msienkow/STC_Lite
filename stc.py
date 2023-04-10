@@ -39,7 +39,7 @@ async def main():
                 reboot_data = []
                 reboot_data.append(('Reboot_Response', 2))
                 await sanitrend_cloud_lite.write_tags(reboot_data)
-                await asyncio.sleep(5)
+                await asyncio.sleep(10)
                 run_code = False
                 stc_lite.reboot_pc()
 
