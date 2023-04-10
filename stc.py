@@ -32,7 +32,7 @@ async def main():
 
                 asyncio.create_task(sanitrend_cloud_lite.upload_tag_data_to_twx())
             
-            await asyncio.sleep(0.25)
+            await asyncio.sleep(0.5)
 
             reboot = stc_lite.get_tag_value(sanitrend_cloud_lite.plc_data, 'Reboot')
             if reboot:
