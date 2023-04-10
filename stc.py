@@ -32,15 +32,15 @@ async def main():
 
                 asyncio.create_task(sanitrend_cloud_lite.upload_tag_data_to_twx())
             
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.25)
 
             reboot = stc_lite.get_tag_value(sanitrend_cloud_lite.plc_data, 'Reboot')
             if reboot:
-                run_code = False
                 reboot_data = []
                 reboot_data.append(('Reboot_Response', 2))
-                asyncio.create_task(sanitrend_cloud_lite.write_tags(reboot_data))
+                await sanitrend_cloud_lite.write_tags(reboot_data)
                 await asyncio.sleep(5)
+                run_code = False
                 stc_lite.reboot_pc()
 
         except KeyboardInterrupt:
