@@ -46,7 +46,7 @@ async def main():
         except KeyboardInterrupt:
             print("\n\nExiting Python and closing PLC connection...\n\n\n")
             sanitrend_cloud_lite.plc.Close()
-            runCode = False
+            run_code = False
             
         except Exception as error:
             print(f'Critical Error: {error} Restarting Code in 30 Seconds...')
