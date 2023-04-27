@@ -441,7 +441,7 @@ def get_tag_value(tag_data: list = [], tag_name: str = '') -> any:
         any: value of tag
     """
     if tag_data and tag_name:
-        values = (tag.Value for tag in tag_data if tag.TagName == tag_name)
+        values = (tag.Value for tag in tag_data if tag.TagName.lower() == tag_name.lower())
         for value in values:
             return value
 
