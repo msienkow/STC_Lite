@@ -197,13 +197,14 @@ class STC:
             for old_data in self.plc_data:
                 if old_data.TagName == new_data.TagName:
                     add_data = False
-                    if isinstance(new_data.Value, float):
-                        if abs(old_data.Value - new_data.Value) >= self.plc_tag_delta:
-                            old_data.Value = new_data.Value
+                    if new_data.Value is not None:
+                        if isinstance(new_data.Value, float):
+                            if abs(old_data.Value - new_data.Value) >= self.plc_tag_delta:
+                                old_data.Value = new_data.Value
 
-                    else:
-                        if old_data.Value != new_data.Value:
-                            old_data.Value = new_data.Value
+                        else:
+                            if old_data.Value != new_data.Value:
+                                old_data.Value = new_data.Value
 
             if add_data:
                 self.plc_data.append(new_data)
