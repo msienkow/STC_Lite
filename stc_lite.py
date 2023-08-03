@@ -198,6 +198,8 @@ class STC:
                 if old_data.TagName == new_data.TagName:
                     add_data = False
                     if new_data.Value is not None:
+                        if old_data.Value is None:
+                            old_data.Value = 0
                         if isinstance(new_data.Value, float):
                             if abs(old_data.Value - new_data.Value) >= self.plc_tag_delta:
                                 old_data.Value = new_data.Value
