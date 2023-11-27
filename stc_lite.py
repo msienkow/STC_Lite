@@ -290,13 +290,33 @@ class STC:
                 
                 if twx_tag and twx_basetype.lower() != ignore_type:
                     tag_value = item.Value
-                    twx_tag_value = round(tag_value,2) if isinstance(tag_value, float) else tag_value
+                    if tag_value is None:
+                        twx_value['quality'] = 'BAD'
+
+                        if twx_basetype == 'NUMBER' or twx_basetype == 'INTEGER':
+                            twx_tag_value = -9999
+
+                        elif twx_basetype == 'BOOLEAN':
+                            twx_tag_value = False
+                        
+                        elif twx_basetype == 'STRING':
+                            twx_tag_value = 'UKNOWN: BAD QUALITY'
+
+                    else:
+                        if twx_basetype == 'NUMBER':
+                            if isinf(tag_value):
+                                twx_tag_value = -9999
+                                twx_value['quality'] = 'BAD'
+
+                            else:
+                                twx_tag_value = round(tag_value,2)
+
+                        else:
+                            twx_tag_value = tag_value
+
                     twx_value['time'] = timestamp
                     twx_value['quality'] = 'GOOD'
                     twx_value['name'] = twx_tag
-                    if twx_basetype == 'NUMBER' and isinf(tag_value):
-                        twx_tag_value = -9999
-                        twx_value['quality'] = 'BAD'
 
                     twx_value['value'] = {
                         'value': twx_tag_value,
