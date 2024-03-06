@@ -291,22 +291,12 @@ class STC:
                 if twx_tag and twx_basetype.lower() != ignore_type:
                     tag_value = item.Value
                     if tag_value is None:
-                        twx_value['quality'] = 'BAD'
-
-                        if twx_basetype == 'NUMBER' or twx_basetype == 'INTEGER':
-                            twx_tag_value = -9999
-
-                        elif twx_basetype == 'BOOLEAN':
-                            twx_tag_value = False
-                        
-                        elif twx_basetype == 'STRING':
-                            twx_tag_value = 'UKNOWN: BAD QUALITY'
+                        continue
 
                     else:
                         if twx_basetype == 'NUMBER':
                             if isinf(tag_value):
-                                twx_tag_value = -9999
-                                twx_value['quality'] = 'BAD'
+                                continue
 
                             else:
                                 twx_tag_value = round(tag_value,2)
