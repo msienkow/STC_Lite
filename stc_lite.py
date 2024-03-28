@@ -404,8 +404,8 @@ class STC:
 
                     property_name_parts = property_name.split('_')
                     property_type = property_name_parts[0]
-                    plc_array_number = int(property_name_parts[len(property_name_parts) - 1]) - 1
                     if property_type.upper() in analog:
+                        plc_array_number = int(property_name_parts[len(property_name_parts) - 1]) - 1
                         tag_name_tag = f'Analog_In_Tags[{plc_array_number}]'
                         tag_name_data = (tag_name_tag, tag_name)
                         units_min_tag = f'Analog_In_Min[{plc_array_number}]'
@@ -417,6 +417,7 @@ class STC:
                         self.remote_plc_config.extend((tag_name_data, units_min_data, units_max_data, units_data))
 
                     if property_type.upper() in digital:
+                        plc_array_number = int(property_name_parts[len(property_name_parts) - 1]) - 1
                         tag_name_tag = f'Digital_In_Tags[{plc_array_number}]'
                         tag_name_data = (tag_name_tag, tag_name)
                         self.remote_plc_config.append(tag_name_data)
