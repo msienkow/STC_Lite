@@ -19,25 +19,31 @@
 
 import math
 import re
-import socket
-import sys
 import time
 
 from .lgx_comm import Connection
 from .lgx_device import Device
 from .lgx_response import Response
 from .lgx_tag import Tag, UDT
-from datetime import datetime, timedelta
+from .utils import is_micropython
 from random import randrange
 from struct import pack, unpack_from
 
-class PLC(object):
 
-    def __init__(self, ip_address="", slot=0, timeout=5.0, Micro800=False):
+if not is_micropython():
+    from datetime import datetime, timedelta
+
+# noinspection PyMethodMayBeStatic
+class PLC(object):
+    __slots__ = ('IPAddress', 'Port', 'ProcessorSlot', 'SocketTimeout', 'Micro800', 'Route', 'conn', 'Offset', 'UDT',
+                 'UDTByName', 'KnownTags', 'TagList', 'ProgramNames', 'StringID', 'StringEncoding', 'CIPTypes')
+
+    def __init__(self, ip_address="", slot=0, timeout=5.0, Micro800=False, port=44818):
         """
         Initialize our parameters
         """
         self.IPAddress = ip_address
+        self.Port = port
         self.ProcessorSlot = slot
         self.SocketTimeout = timeout
         self.Micro800 = Micro800
@@ -55,6 +61,7 @@ class PLC(object):
         self.StringEncoding = 'utf-8'
         self.CIPTypes = {0x00: (0, "UNKNOWN", '?'),
                          0xa0: (88, "STRUCT", '<B'),
+                         0xc0: (8, "DT", '<Q'),
                          0xc1: (1, "BOOL", '?'),
                          0xc2: (1, "SINT", '<b'),
                          0xc3: (2, "INT", '<h'),
@@ -65,9 +72,16 @@ class PLC(object):
                          0xc8: (4, "UDINT", '<I'),
                          0xc9: (8, "LWORD", '<Q'),
                          0xca: (4, "REAL", '<f'),
+                         0xcc: (8, "LDT", '<Q'),
                          0xcb: (8, "LREAL", '<d'),
+                         0xd0: (1, "O_STRING", '<B'),
+                         0xd1: (1, "BYTE", "<B"),
+                         0xd2: (2, "WORD", "<I"),
                          0xd3: (4, "DWORD", '<i'),
-                         0xda: (1, "STRING", '<B')}
+                         0xd6: (4, "TIME32", '<I'),
+                         0xd7: (8, "TIME", '<Q'),
+                         0xda: (1, "STRING", '<B'),
+                         0xdf: (8, "LTIME", '<Q')}
 
     @property
     def ConnectionSize(self):
@@ -99,10 +113,11 @@ class PLC(object):
         """
         if isinstance(tag, (list, tuple)):
             if len(tag) == 1:
-                return [self._read_tag(tag[0], count, datatype)]
-            if datatype:
-                raise TypeError('Datatype should be set to None when reading lists')
-            if self.Micro800 == True:
+                if isinstance(tag[0], (list, tuple)):
+                    return [self._read_tag(*tag[0])]
+                else:
+                    return [self._read_tag(tag[0], count, datatype)]
+            if self.Micro800:
                 if isinstance(tag[0], (list, tuple)):
                     return [self._read_tag(*t) for t in tag]
                 else:
@@ -125,26 +140,26 @@ class PLC(object):
             else:
                 return self._batch_write(tag)
         else:
-            if value == None:
+            if value is None:
                 raise TypeError('You must provide a value to write')
             else:
                 return self._write_tag(tag, value, datatype)
 
     def GetPLCTime(self, raw=False):
         """
-        Get the PLC's clock time, return as human readable (default) or raw if raw=True
+        Get the controller clock time, return as human-readable (default) or raw if raw=True
 
         returns Response class (.TagName, .Value, .Status)
         """
-        return self._getPLCTime(raw)
+        return self._get_plc_time(raw)
 
     def SetPLCTime(self):
         """
-        Sets the PLC's clock time
+        Sets the controller clock time
 
         returns Response class (.TagName, .Value, .Status)
         """
-        return self._setPLCTime()
+        return self._set_plc_time()
 
     def GetTagList(self, allTags=True):
         """
@@ -159,8 +174,8 @@ class PLC(object):
         self.KnownTags = {}
         self.TagList = []
         self.ProgramNames = []
-        tag_list = self._getTagList(allTags)
-        updated_list = self._getUDT(tag_list.Value) if tag_list.Value else None
+        tag_list = self._get_tag_list(allTags)
+        updated_list = self._get_udt(tag_list.Value) if tag_list.Value else None
         return Response(None, updated_list, tag_list.Status)
 
     def GetProgramTagList(self, programName):
@@ -176,15 +191,15 @@ class PLC(object):
 
         # If ProgramNames is empty then _getTagList hasn't been called
         if not self.ProgramNames:
-            self._getTagList(False)
+            self._get_tag_list(False)
 
-        # Get single program tags if progragName exists
+        # Get single program tags if programName exists
         if programName in self.ProgramNames:
-            program_tags = self._getProgramTagList(programName)
+            program_tags = self._get_program_tag_list(programName)
             # Getting status from program_tags Response object
             # _getUDT returns a list of tags might need rework in the future
             status = program_tags.Status
-            program_tags = self._getUDT(program_tags.Value)
+            program_tags = self._get_udt(program_tags.Value)
             return Response(None, program_tags, status)
         else:
             return Response(programName, None, 'Program not found, please check name!')
@@ -204,7 +219,7 @@ class PLC(object):
 
         tags = ''
         if not self.ProgramNames:
-            tags = self._getTagList(False)
+            tags = self._get_tag_list(False)
         if tags:
             status = tags.Status
         if self.ProgramNames:
@@ -219,7 +234,14 @@ class PLC(object):
 
         returns Response class (.TagName, .Value, .Status)
         """
-        return self._discover()
+        if is_micropython():
+            # limited implementation of lwip_socket_setsockopt()
+            # https://github.com/micropython/micropython/issues/2691
+            status = "Discover not available on micropython, due to limited socket module"
+            return Response(None, None, status)
+
+        devices = self.conn.discover(parse_procedural_parameter=Device.parse)
+        return Response(None, devices, 0)
 
     def GetModuleProperties(self, slot):
         """
@@ -227,7 +249,7 @@ class PLC(object):
 
         returns Response class (.TagName, .Value, .Status)
         """
-        return self._getModuleProperties(slot)
+        return self._get_module_properties(slot)
 
     def GetDeviceProperties(self):
         """
@@ -236,7 +258,17 @@ class PLC(object):
 
         returns Response class (.TagName, .Value, .Status)
         """
-        return self._getDeviceProperties()
+        return self._get_device_properties()
+
+    def Message(self, cip_service, cip_class, cip_instance, cip_attribute=None, data=b''):
+        """
+        User can send a custom message by providing service/class/instance
+        data should already be packed in bytes
+
+        returns Response class (.TagName, .Value, .Status)
+        """
+
+        return self._message(cip_service, cip_class, cip_instance, cip_attribute, data)
 
     def Close(self):
         """
@@ -249,7 +281,7 @@ class PLC(object):
         Processes the multiple read request. Split into multiple requests and
         reassemble responses when needed
         """
-        if self.Micro800 == True:
+        if self.Micro800:
             return Response(tags, None, 8)
 
         conn = self.conn.connect()
@@ -275,6 +307,7 @@ class PLC(object):
         Processes the read request
         """
         self.Offset = 0
+        words = 1
 
         conn = self.conn.connect()
         if not conn[0]:
@@ -295,9 +328,7 @@ class PLC(object):
             request = self._add_read_service(ioi, words)
         elif bit_of_word(tag):
             # bits of word
-            split_tag = tag_name.split('.')
-            bit_pos = split_tag[len(split_tag)-1]
-            bit_pos = int(bit_pos)
+            bit_pos = int(tag_name.split('.')[-1])
 
             words = get_word_count(bit_pos, elements, bit_count)
             request = self._add_read_service(ioi, words)
@@ -316,7 +347,7 @@ class PLC(object):
         if not ret_data:
             return Response(tag_name, None, status)
         data = ret_data[50:]
-        self.Offset += len(data)-pad
+        self.Offset += len(data) - pad
         req = data
 
         while status == 6:
@@ -325,7 +356,7 @@ class PLC(object):
             else:
                 request = self._add_partial_read_service(ioi, elements)
             status, ret_data = self.conn.send(request)
-            data = ret_data[50+pad:]
+            data = ret_data[50 + pad:]
             self.Offset += len(data)
             req += data
 
@@ -344,14 +375,14 @@ class PLC(object):
     def _multi_read(self, tags, first):
         """
         Processes the multiple read request, but only the possible number of tags in a single request. The size
-        difference between tags and result must be check for a complete read
+        difference between tags and result must check for a complete read
         """
-        service_segs = []
+        service_segments = []
         segments = b""
         tag_count = 0
         self.Offset = 0
 
-        header = self._buildMultiServiceHeader()
+        header = self._build_multi_service_header()
 
         min_tag_size = 24
         service_segment_size = 8
@@ -368,7 +399,7 @@ class PLC(object):
                 if data_type == 0xa0:
                     dt_size -= 8
             else:
-                #go with the worst case size
+                # go with the worst case size
                 dt_size = self.CIPTypes[160][0]
                 data_type = None
 
@@ -376,17 +407,14 @@ class PLC(object):
             rsp_tag_size = min_tag_size + len(base_tag) + dt_size
 
             ioi = self._build_ioi(tag_name, data_type)
-            if first:
-                read_service = self._add_partial_read_service(ioi, 1)
-            else:
-                read_service = self._add_read_service(ioi, 1)
+            read_service = self._add_read_service(ioi, 1)
 
             next_request_size = service_segment_size + rsp_tag_size + 2
 
             # check if request size does not exceed (ConnectionSize bytes limit)
             if next_request_size <= self.ConnectionSize and rsp_tag_size <= self.ConnectionSize:
                 service_segment_size = service_segment_size + rsp_tag_size
-                service_segs.append(read_service)
+                service_segments.append(read_service)
                 tag_count = tag_count + 1
             else:
                 break
@@ -401,10 +429,10 @@ class PLC(object):
 
         # assemble all the segments
         for i in range(tag_count):
-            segments += service_segs[i]
+            segments += service_segments[i]
 
-        for i in range(tag_count-1):
-            temp += len(service_segs[i])
+        for i in range(tag_count - 1):
+            temp += len(service_segments[i])
             offsets += pack('<H', temp)
 
         request = header + segment_count + offsets + segments
@@ -421,12 +449,12 @@ class PLC(object):
         Processes the multiple write request. Split into multiple requests and
         reassemble responses when needed
         """
-        if self.Micro800 == True:
+        if self.Micro800:
             return Response(tags, None, 8)
 
         conn = self.conn.connect()
         if not conn[0]:
-            return [Response(t, None, conn[1]) for t in tags[1]]
+            return [Response(t[0], None, conn[1]) for t in tags]
 
         # format the tags so that we have just the tag name or
         # the tag name and data type
@@ -459,7 +487,7 @@ class PLC(object):
 
         conn = self.conn.connect()
         if not conn[0]:
-            return Response(tag_name, value, conn[1])
+            return Response(tag_name, None, conn[1])
 
         tag, base_tag, index = parse_tag_name(tag_name)
         resp = self._initial_read(tag, base_tag, data_type)
@@ -469,20 +497,12 @@ class PLC(object):
         data_type = self.KnownTags[base_tag][0]
 
         # check if values passed were a list
-        if isinstance(value, (list, tuple)):
-            elements = len(value)
-        else:
-            elements = 1
+        if not isinstance(value, (list, tuple)):
             value = [value]
 
         # format the values
         for v in value:
-            if data_type == 0xca or data_type == 0xcb:
-                write_data.append(float(v))
-            elif data_type == 0xa0 or data_type == 0xda:
-                write_data.append(self._make_string(v))
-            else:
-                write_data.append(int(v))
+            write_data.append(v)
 
         # save the number of values we are writing
         element_count = len(write_data)
@@ -492,13 +512,13 @@ class PLC(object):
 
         ioi = self._build_ioi(tag_name, data_type)
 
-        # handle sending the write data
+        # handle sending write data
         if len(write_data) > 1:
             # write requires multiple packets
             for w in write_data:
                 request = self._add_frag_write_service(element_count, ioi, w, data_type)
                 status, ret_data = self.conn.send(request)
-                self.Offset += len(w)*self.CIPTypes[data_type][0]
+                self.Offset += len(w) * self.CIPTypes[data_type][0]
         else:
             # write fits in one packet
             if bit_of_word(tag_name) or data_type == 0xd3:
@@ -522,7 +542,7 @@ class PLC(object):
         """
         Processes the multiple write request
         """
-        service_segs = []
+        service_segments = []
         segments = b""
         tag_count = 0
         self.Offset = 0
@@ -530,7 +550,7 @@ class PLC(object):
         min_tag_size = 24
         service_segment_size = 8
 
-        header = self._buildMultiServiceHeader()
+        header = self._build_multi_service_header()
 
         write_values = []
         for wd in write_data:
@@ -546,14 +566,8 @@ class PLC(object):
                 dt_size = self.CIPTypes[160][0]
                 data_type = 0
 
-            # format the values
-            if data_type == 0xca or data_type == 0xcb:
-                value = float(wd[1])
-            elif data_type == 0xa0 or data_type == 0xda:
-                value = [self._make_string(wd[1])]
-            else:
-                typ = type(wd[1])
-                value = typ(wd[1])
+            typ = type(wd[1])
+            value = typ(wd[1])
 
             # ensure that write values are always a list
             if isinstance(value, (list, tuple)):
@@ -570,7 +584,7 @@ class PLC(object):
                 temp_segments = []
                 tmp_count = tag_count
                 tmp_write_values = []
-                bools_fit = True
+                booleans_fit = True
                 for i in range(len(high)):
                     ioi = self._build_ioi(tags[i], data_type)
                     write_service = self._add_mod_write_service(ioi, data_type, high[i], low[i])
@@ -580,17 +594,17 @@ class PLC(object):
                     if next_request_size <= self.ConnectionSize and rsp_tag_size <= self.ConnectionSize:
                         service_segment_size = service_segment_size + rsp_tag_size
                         temp_segments.append(write_service)
-                        tmp_write_values.append((tags[i], (high[i], low[i])))
+                        tmp_write_values.append((tags[i], value))
                         tag_count = tag_count + 1
                     else:
                         # BOOLs didn't fit in the current packet, abort
-                        bools_fit = True
+                        booleans_fit = True
                         tag_count = tmp_count
                         break
-                if bools_fit:
-                    # if the bools fit in this request, append them.
+                if booleans_fit:
+                    # if the booleans fit in this request, append them.
                     write_values.extend(tmp_write_values)
-                    service_segs.extend(temp_segments)
+                    service_segments.extend(temp_segments)
             else:
                 ioi = self._build_ioi(tag_name, data_type)
                 write_service = self._add_write_service(ioi, value, data_type)
@@ -600,7 +614,7 @@ class PLC(object):
                 # check if request size does not exceed (ConnectionSize bytes limit)
                 if next_request_size <= self.ConnectionSize and rsp_tag_size <= self.ConnectionSize:
                     service_segment_size = service_segment_size + rsp_tag_size
-                    service_segs.append(write_service)
+                    service_segments.append(write_service)
                     tag_count = tag_count + 1
                 else:
                     break
@@ -614,10 +628,10 @@ class PLC(object):
 
         # assemble all the segments
         for i in range(tag_count):
-            segments += service_segs[i]
+            segments += service_segments[i]
 
-        for i in range(tag_count-1):
-            temp += len(service_segs[i])
+        for i in range(tag_count - 1):
+            temp += len(service_segments[i])
             offsets += pack('<H', temp)
 
         request = header + segment_count + offsets + segments
@@ -629,7 +643,7 @@ class PLC(object):
 
         return self._parse_multi_write(write_values, ret_data)
 
-    def _getPLCTime(self, raw=False):
+    def _get_plc_time(self, raw=False):
         """
         Requests the PLC clock time
         """
@@ -637,31 +651,13 @@ class PLC(object):
         if not conn[0]:
             return Response(None, None, conn[1])
 
-        AttributeService = 0x03
-        AttributeSize = 0x02
-        AttributeClassType = 0x20
-        AttributeClass = 0x8B
-        AttributeInstanceType = 0x24
-        AttributeInstance = 0x01
-        AttributeCount = 0x01
-        TimeAttribute = 0x0B
-
-        request = pack('<BBBBBBH1H',
-                        AttributeService,
-                        AttributeSize,
-                        AttributeClassType,
-                        AttributeClass,
-                        AttributeInstanceType,
-                        AttributeInstance,
-                        AttributeCount,
-                        TimeAttribute)
-
+        request = self._cip_message(0x03, 0x8b, 0x01, [0x0b])
         status, ret_data = self.conn.send(request)
 
         if status == 0:
             # get the time from the packet
             plc_time = unpack_from('<Q', ret_data, 56)[0]
-            if raw:
+            if raw or is_micropython():
                 value = plc_time
             else:
                 human_time = datetime(1970, 1, 1) + timedelta(microseconds=plc_time)
@@ -671,7 +667,7 @@ class PLC(object):
 
         return Response(None, value, status)
 
-    def _setPLCTime(self):
+    def _set_plc_time(self):
         """
         Requests the PLC clock time
         """
@@ -679,34 +675,16 @@ class PLC(object):
         if not conn[0]:
             return Response(None, None, conn[1])
 
-        AttributeService = 0x04
-        AttributeSize = 0x02
-        AttributeClassType = 0x20
-        AttributeClass = 0x8B
-        AttributeInstanceType = 0x24
-        AttributeInstance = 0x01
-        AttributeCount = 0x02
-        TimeAttribute = 0x06
-        Time = int(time.time() * 1000000)
-        DSTAttribute = 0x0a
-        request = pack('<BBBBBBHHQHB',
-                        AttributeService,
-                        AttributeSize,
-                        AttributeClassType,
-                        AttributeClass,
-                        AttributeInstanceType,
-                        AttributeInstance,
-                        AttributeCount,
-                        TimeAttribute,
-                        Time,
-                        DSTAttribute,
-                        time.daylight)
+        current_time = int(time.time() * 1000000)
+        time_bytes = pack("<Q", current_time)
+        dst = pack("<B", time.daylight)
 
+        request = self._cip_message(0x04, 0x8b, 0x01, [0x06, 0x0a], [time_bytes, dst])
         status, ret_data = self.conn.send(request)
 
-        return Response(None, Time, status)
+        return Response(None, current_time, status)
 
-    def _getTagList(self, allTags):
+    def _get_tag_list(self, all_tags):
         """
         Requests the controller tag list and returns a list of Tag type
         """
@@ -719,30 +697,23 @@ class PLC(object):
         tags = []
 
         while status == 6:
-            request = self._buildTagListRequest(programName=None)
+            request = self._build_tag_list_request(program_name=None)
             status, ret_data = self.conn.send(request)
             if status == 0 or status == 6:
-                tags += self._parse_packet(ret_data, programName=None)
+                tags += self._parse_packet(ret_data, program_name=None)
                 self.Offset += 1
             else:
                 return Response(None, None, status)
 
-        if allTags:
+        if all_tags:
             for program_name in self.ProgramNames:
 
                 self.Offset = 0
-
-                request = self._buildTagListRequest(program_name)
-                status, ret_data = self.conn.send(request)
-                if status == 0 or status == 6:
-                    tags += self._parse_packet(ret_data, program_name)
-                    self.Offset += 1
-                else:
-                    return Response(None, None, status)
+                status = 6
 
                 while status == 6:
                     self.Offset += 1
-                    request = self._buildTagListRequest(program_name)
+                    request = self._build_tag_list_request(program_name)
                     status, ret_data = self.conn.send(request)
                     if status == 0 or status == 6:
                         tags += self._parse_packet(ret_data, program_name)
@@ -752,7 +723,7 @@ class PLC(object):
         self.TagList = tags
         return Response(None, tags, status)
 
-    def _getProgramTagList(self, programName):
+    def _get_program_tag_list(self, program_name):
         """
         Requests tag list for a specific program and returns a list of Tag type
         """
@@ -761,27 +732,21 @@ class PLC(object):
             return Response(None, None, conn[1])
 
         self.Offset = 0
+        status = 6
         tags = []
-
-        request = self._buildTagListRequest(programName)
-        status, ret_data = self.conn.send(request)
-        if status == 0 or status == 6:
-            tags += self._parse_packet(ret_data, programName)
-        else:
-            return Response(None, None, status)
 
         while status == 6:
             self.Offset += 1
-            request = self._buildTagListRequest(programName)
+            request = self._build_tag_list_request(program_name)
             status, ret_data = self.conn.send(request)
             if status == 0 or status == 6:
-                tags += self._parse_packet(ret_data, programName)
+                tags += self._parse_packet(ret_data, program_name)
             else:
                 return Response(None, None, status)
 
         return Response(None, tags, status)
 
-    def _getUDT(self, tag_list):
+    def _get_udt(self, tag_list):
         """
         Request information about UDT makeup.
         Returns the tag list with UDT name appended
@@ -797,10 +762,10 @@ class PLC(object):
         self.UDTByName = {}
         template = {}
         while len(unique):
-            iterTemplate = {}
+            iter_template = {}
             for u in unique:
-                if not u.DataTypeValue in self.UDT.keys():
-                    temp = self._getTemplateAttribute(u.DataTypeValue)
+                if u.DataTypeValue not in self.UDT.keys():
+                    temp = self._get_template_attribute(u.DataTypeValue)
 
                     block = temp[46:]
                     if len(block) > 24:
@@ -808,22 +773,22 @@ class PLC(object):
                         words = (val * 4) - 23
                         size = int(math.ceil(words / 4.0)) * 4
                         member_count = int(unpack_from('<H', block, 24)[0])
-                        iterTemplate[u.DataTypeValue] = template[u.DataTypeValue] = [size, '', member_count]
+                        iter_template[u.DataTypeValue] = template[u.DataTypeValue] = [size, '', member_count]
                     else:
                         print("Received invalid template attribute for", u.TagName)
 
             unique = []
-            for key, value in iterTemplate.items():
-                t = self._getTemplate(key, value[0])
+            for key, value in iter_template.items():
+                t = self._get_template(key, value[0])
                 member_count = value[2]
                 size = member_count * 8
                 p = t[50:]
-                memberBytes = p[size:]
+                member_bytes = p[size:]
                 split_char = pack('<b', 0x00)
-                members = memberBytes.split(split_char)
+                members = member_bytes.split(split_char)
                 split_char = pack('<b', 0x3b)
-                defs = members[0].split(split_char)
-                name = str(defs[0].decode('utf-8'))
+                definitions = members[0].split(split_char)
+                name = str(definitions[0].decode('utf-8'))
                 template[key][1] = name
 
                 udt = UDT()
@@ -833,36 +798,36 @@ class PLC(object):
                     field = Tag()
                     field.UDT = udt
                     field.TagName = str(members[i].decode('utf-8'))
-                    if len(defs) > 1:
-                        scope = unpack_from('<BB', defs[1], 1 + (i-1)*2)
+                    if len(definitions) > 1:
+                        scope = unpack_from('<BB', definitions[1], 1 + (i - 1) * 2)
                         field.AccessRight = scope[1] & 0x03
                         field.Scope0 = scope[0]
                         field.Scope1 = scope[1]
                         field.Internal = field.AccessRight == 0
 
-                    fieldDef = p[slice((i-1) * 8, i * 8)]
-                    field.Bytes = fieldDef
-                    field.InstanceID = unpack_from('<H', fieldDef, 6)[0]
-                    field.Meta = unpack_from("<H", fieldDef, 4)[0]
-                    val = unpack_from("<H", fieldDef, 2)[0]
+                    field_def = p[(i - 1) * 8: i * 8]
+                    field.Bytes = field_def
+                    field.InstanceID = unpack_from('<H', field_def, 6)[0]
+                    field.Meta = unpack_from("<H", field_def, 4)[0]
+                    val = unpack_from("<H", field_def, 2)[0]
                     field.SymbolType = val & 0xff
                     field.DataTypeValue = val & 0xfff
 
                     field.Array = (val & 0x6000) >> 13
                     field.Struct = (val & 0x8000) >> 15
                     if field.Array:
-                        field.Size = unpack_from('<H', fieldDef, 0)[0]
+                        field.Size = unpack_from('<H', field_def, 0)[0]
                     else:
                         field.Size = 0
 
                     if field.TagName.startswith('__'):
                         continue
 
-                    if field.TagName in ('FbkOff'):
+                    if field.TagName in 'FbkOff':
                         tags.append(field)
 
-                    if not field.SymbolType in self.CIPTypes:
-                        if not field.DataTypeValue in self.UDT:
+                    if field.SymbolType not in self.CIPTypes:
+                        if field.DataTypeValue not in self.UDT:
                             unique.append(field)
                     udt.Fields.append(field)
                     udt.FieldsByName[field.TagName] = field
@@ -875,7 +840,7 @@ class PLC(object):
             elif tag.SymbolType in self.CIPTypes:
                 tag.DataType = self.CIPTypes[tag.SymbolType][1]
 
-        for typeName, udt in self.UDT.items():
+        for type_name, udt in self.UDT.items():
             for field in udt.Fields:
                 if field.DataTypeValue in template:
                     field.DataType = template[field.DataTypeValue][1]
@@ -884,24 +849,25 @@ class PLC(object):
 
         return tag_list
 
-    def _getTemplateAttribute(self, instance):
+    def _get_template_attribute(self, instance):
         """
         Get the attributes of a UDT
         """
-        request = self._buildTemplateAttributes(instance)
+        request = self._cip_message(0x03, 0x6c, instance, [0x04, 0x03, 0x02, 0x01])
         status, ret_data = self.conn.send(request)
         return ret_data
 
-    def _getTemplate(self, instance, dataLen):
+    def _get_template(self, instance, data_len):
         """
-        Get the members of a UDT so we can get it
+        Get the members of a UDT, so we can get it
         """
         data = b''
         status = 0
-        partOffset = 0
-        remaining = dataLen
+        part_offset = 0
+        remaining = data_len
         while remaining > 0 and not status:
-            request = self._readTemplateService(instance, remaining, partOffset)
+            packet_data = pack("<IH", part_offset, remaining)
+            request = self._cip_message(0x4c, 0x6c, instance, None, packet_data)
             status, ret_data = self.conn.send(request)
             if status == 6:
                 status = 0
@@ -909,126 +875,22 @@ class PLC(object):
                 part = ret_data[50:]
                 ret_data = part
             data = data + ret_data
-            partOffset = len(data) - 50
-            remaining = dataLen - partOffset
+            part_offset = len(data) - 50
+            remaining = data_len - part_offset
+
         return data
 
-    def _buildTemplateAttributes(self, instance):
+    def _read_template_service(self, instance, data_len, offset=0):
         """
         Build the template attribute packet, part of
-        retreiving the UDT names
+        retrieving the UDT names
         """
-        TemplateService = 0x03
-        TemplateLength = 0x03
-        TemplateClassType = 0x20
-        TemplateClass = 0x6c
-        TemplateInstanceType = 0x25
-        TemplateInstance = instance
-        AttribCount = 0x04
-        Attrib4 = 0x04
-        Attrib3 = 0x03
-        Attrib2 = 0x02
-        Attrib1 = 0x01
+        data = pack("<IH", offset, data_len)
 
-        return pack('<BBBBHHHHHHH',
-                    TemplateService,
-                    TemplateLength,
-                    TemplateClassType,
-                    TemplateClass,
-                    TemplateInstanceType,
-                    TemplateInstance,
-                    AttribCount,
-                    Attrib4,
-                    Attrib3,
-                    Attrib2,
-                    Attrib1)
+        request = self._cip_message(0x4c, 0x6c, instance, None, data)
+        return request
 
-    def _readTemplateService(self, instance, dataLen, offset = 0):
-        """
-        Build the template attribute packet, part of
-        retreiving the UDT names
-        """
-        TemplateService = 0x4c
-        TemplateLength = 0x03
-        TemplateClassType = 0x20
-        TemplateClass = 0x6c
-        TemplateInstanceType = 0x25
-        TemplateInstance = instance
-        TemplateOffset = offset
-        DataLength = dataLen
-
-        return pack('<BBBBHHIH',
-                    TemplateService,
-                    TemplateLength,
-                    TemplateClassType,
-                    TemplateClass,
-                    TemplateInstanceType,
-                    TemplateInstance,
-                    TemplateOffset,
-                    DataLength)
-
-    def _discover(self):
-        """
-        Discover devices on the network, similar to the RSLinx
-        Ethernet I/P driver
-        """
-        devices = []
-        request = self._buildListIdentity()
-
-        # get available ip addresses
-        addresses = socket.getaddrinfo(socket.gethostname(), None)
-
-        # we're going to send a request for all available ipv4
-        # addresses and build a list of all the devices that reply
-        for ip in addresses:
-            if ip[0] == 2:  # IP v4
-                # create a socket
-                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                s.settimeout(0.5)
-                s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-                s.bind((ip[4][0], 0))
-                s.sendto(request, ('255.255.255.255', 44818))
-                try:
-                    while(1):
-                        ret = s.recv(4096)
-                        context = unpack_from('<Q', ret, 14)[0]
-                        if context == 0x006d6f4d6948:
-                            device = Device.parse(ret)
-                            if device.IPAddress:
-                                devices.append(device)
-                except Exception:
-                    pass
-                try:
-                    s.close()   ### Ensure socket is closed
-                except:
-                    pass
-
-        # added this because looping through addresses above doesn't work on
-        # linux so this is a "just in case".  If we don't get results with the
-        # above code, try one more time without binding to an address
-        if len(devices) == 0:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.settimeout(0.5)
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            s.sendto(request, ('255.255.255.255', 44818))
-            try:
-                while(1):
-                    ret = s.recv(4096)
-                    context = unpack_from('<Q', ret, 14)[0]
-                    if context == 0x006d6f4d6948:
-                        device = Device.parse(ret)
-                        if device.IPAddress:
-                            devices.append(device)
-            except Exception:
-                pass
-            try:
-                s.close()   ### Ensure socket is closed
-            except:
-                pass
-
-        return Response(None, devices, 0)
-
-    def _getModuleProperties(self, slot):
+    def _get_module_properties(self, slot):
         """
         Request the properties of a module in a particular
         slot.  Returns Device()
@@ -1037,21 +899,7 @@ class PLC(object):
         if not conn[0]:
             return Response(None, Device(), conn[1])
 
-        AttributeService = 0x01
-        AttributeSize = 0x02
-        AttributeClassType = 0x20
-        AttributeClass = 0x01
-        AttributeInstanceType = 0x24
-        AttributeInstance = 0x01
-
-        request = pack('<6B',
-                        AttributeService,
-                        AttributeSize,
-                        AttributeClassType,
-                        AttributeClass,
-                        AttributeInstanceType,
-                        AttributeInstance)
-
+        request = self._cip_message(0x01, 0x01, 0x01)
         status, ret_data = self.conn.send(request, False, slot)
         pad = pack('<I', 0x00)
         ret_data = pad + ret_data
@@ -1061,7 +909,7 @@ class PLC(object):
         else:
             return Response(None, Device(), status)
 
-    def _getDeviceProperties(self):
+    def _get_device_properties(self):
         """
         Request the properties of a device at the
         specified IP address.  Returns Device()
@@ -1070,21 +918,7 @@ class PLC(object):
         if not conn[0]:
             return Response(None, Device(), conn[1])
 
-        AttributeService = 0x01
-        AttributeSize = 0x02
-        AttributeClassType = 0x20
-        AttributeClass = 0x01
-        AttributeInstanceType = 0x24
-        AttributeInstance = 0x01
-
-        request = pack('<6B',
-                        AttributeService,
-                        AttributeSize,
-                        AttributeClassType,
-                        AttributeClass,
-                        AttributeInstanceType,
-                        AttributeInstance)
-
+        request = self._cip_message(0x01, 0x01, 0x01)
         status, ret_data = self.conn.send(request, False)
         pad = pack('<I', 0x00)
         ret_data = pad + ret_data
@@ -1094,7 +928,57 @@ class PLC(object):
         else:
             return Response(None, Device(), status)
 
+    def _message(self, cip_service, cip_class, cip_instance, cip_attribute, data):
+        conn = self.conn.connect(False)
+        if not conn[0]:
+            return Response(None, None, conn[1])
+
+        request = self._cip_message(cip_service, cip_class, cip_instance, cip_attribute, data)
+        status, ret_data = self.conn.send(request, False)
+
+        return Response(None, ret_data, status)
+
+    def _cip_message(self, cip_service, cip_class, cip_instance, cip_attribute=None, data=b''):
+        """
+        Build CIP message with service/class/instance
+        """
+        if cip_class > 256:
+            class_bytes =  pack("<HH", 0x21, cip_class)
+            service_size = 3
+        else:
+            class_bytes = pack("<BB", 0x20, cip_class)
+            service_size = 2
+        attribute_bytes = b''
+
+        # append the instance
+        if cip_instance > 256:
+            instance_bytes = pack("<HH", 0x25, cip_instance)
+            service_size += 1
+        else:
+            instance_bytes = pack("<BB", 0x24, cip_instance)
+
+        # append the attribute if any
+        if cip_attribute:
+            if isinstance(cip_attribute, list):
+                attribute_bytes = pack("<H", len(cip_attribute))
+                for i, attribute in enumerate(cip_attribute):
+                    attribute_bytes += pack("<H", attribute)
+                    if isinstance(data, list):
+                            attribute_bytes += data[i]
+            else:
+                service_size += 1
+                attribute_bytes = pack("<BB", 0x30, cip_attribute)
+                attribute_bytes += data
+        elif data:
+            attribute_bytes = data
+
+        service_bytes = pack("<BB", cip_service, service_size)
+        cip_request = service_bytes + class_bytes + instance_bytes + attribute_bytes
+
+        return cip_request
+
     def _build_ioi(self, tag_name, data_type):
+
         """
         The tag IOI is basically the tag name assembled into
         an array of bytes structured in a way that the PLC will
@@ -1110,43 +994,38 @@ class PLC(object):
             Oh and multi-dim arrays, program scope tags...
         """
         ioi = b""
-        tag_array = tag_name.split(".")
 
-        # this loop figures out the packet length and builds our packet
-        for i in range(len(tag_array)):
-            if tag_array[i].endswith("]"):
-                tag, base_tag, index = parse_tag_name(tag_array[i])
+        for segment in tag_name.split("."):
+            if segment.endswith("]"):
+                _, base_tag, index = parse_tag_name(segment)
 
-                tag_size = len(base_tag)
-                if data_type == 0xd3 and i == len(tag_array)-1:
+            # bool arrays are special
+                if data_type == 0xd3:
                     index = int(index/32)
-                elif data_type == None:
-                    index = 0
 
-                # Assemble the packet
-                ioi += pack('<BB', 0x91, tag_size)
+                name_length = len(base_tag)
+                ioi += pack('<BB', 0x91, name_length)
                 ioi += base_tag.encode('utf-8')
-                if tag_size % 2:
-                    tag_size += 1
+                if name_length % 2:
+                    name_length += 1
                     ioi += pack('<B', 0x00)
 
-                BaseTagLenWords = tag_size / 2
-                if i < len(tag_array):
-                    if not isinstance(index, list):
-                        if index < 256:
-                            ioi += pack('<BB', 0x28, index)
-                        if 65536 > index > 255:
-                            ioi += pack('<HH', 0x29, index)
-                        if index > 65535:
-                            ioi += pack('<HI', 0x2A, index)
-                    else:
-                        for i in range(len(index)):
-                            if index[i] < 256:
-                                ioi += pack('<BB', 0x28, index[i])
-                            if 65536 > index[i] > 255:
-                                ioi += pack('<HH', 0x29, index[i])
-                            if index[i] > 65535:
-                                ioi += pack('<HI', 0x2A, index[i])
+                if isinstance(index, list):
+                    for value in index:
+                        if value < 256:
+                            ioi += pack('<BB', 0x28, value)
+                        if 65536 > value > 255:
+                            ioi += pack('<HH', 0x29, value)
+                        if value > 65535:
+                            ioi += pack('<HI', 0x2A, value)
+                else:
+                    if index < 256:
+                        ioi += pack('<BB', 0x28, index)
+                    if 65536 > index > 255:
+                        ioi += pack('<HH', 0x29, index)
+                    if index > 65535:
+                        ioi += pack('<HI', 0x2A, index)
+
             else:
                 """
                 for non-array segment of tag
@@ -1157,12 +1036,12 @@ class PLC(object):
                     the individual bit in the read function.
                 """
                 try:
-                    if int(tag_array[i]) <= 31:
+                    if int(segment) <= 31:
                         pass
                 except Exception:
-                    tag_size = int(len(tag_array[i]))
+                    tag_size = int(len(segment))
                     ioi += pack('<BB', 0x91, tag_size)
-                    ioi += tag_array[i].encode('utf-8')
+                    ioi += segment.encode('utf-8')
                     if tag_size % 2:
                         tag_size += 1
                         ioi += pack('<B', 0x00)
@@ -1173,8 +1052,9 @@ class PLC(object):
         """
         Add the read service to the tagIOI
         """
+        self._is_not_used()
         request_service = 0x4C
-        request_size = int(len(ioi)/2)
+        request_size = int(len(ioi) / 2)
         read_service = pack('<BB', request_service, request_size)
         read_service += ioi
         read_service += pack('<H', int(elements))
@@ -1184,8 +1064,9 @@ class PLC(object):
         """
         Add the partial read service to the tag IOI
         """
+        self._is_not_used()
         request_service = 0x52
-        request_size = int(len(ioi)/2)
+        request_size = int(len(ioi) / 2)
         read_service = pack('<BB', request_service, request_size)
         read_service += ioi
         read_service += pack('<H', int(elements))
@@ -1197,7 +1078,7 @@ class PLC(object):
         Add the write command stuff to the tagIOI
         """
         request_service = 0x4D
-        request_size = int(len(ioi)/2)
+        request_size = int(len(ioi) / 2)
         write_service = pack('<BB', request_service, request_size)
         write_service += ioi
 
@@ -1208,13 +1089,24 @@ class PLC(object):
             type_len = 0x00
             write_service += pack('<BBH', data_type, type_len, len(write_data))
 
-        for v in write_data:
+        for value in write_data:
+            if data_type == 0xca or data_type == 0xcb:
+                value = float(value)
+            elif data_type == 0xa0:
+                value = self._make_standard_string(value)
+            elif data_type == 0xda or data_type == 0xd0:
+                value = self._make_special_string(value)
             try:
-                for i in range(len(v)):
-                    el = v[i]
+                for i in range(len(value)):
+                    el = value[i]
                     write_service += pack(self.CIPTypes[data_type][2], el)
             except Exception:
-                write_service += pack(self.CIPTypes[data_type][2], v)
+                # handling special format for micropython for bools
+                # boolean format ? doesn't exist for upy struct module
+                if self.CIPTypes[data_type][2] == '?' and is_micropython():
+                    write_service += pack('B', value)
+                else:
+                    write_service += pack(self.CIPTypes[data_type][2], value)
 
         return write_service
 
@@ -1225,7 +1117,7 @@ class PLC(object):
         other writes
         """
         request_service = 0x4E
-        request_size = int(len(ioi)/2)
+        request_size = int(len(ioi) / 2)
 
         write_request = pack('<BB', request_service, request_size)
         write_request += ioi
@@ -1243,7 +1135,7 @@ class PLC(object):
         """
         Add the fragmented write command stuff to the tagIOI
         """
-        path_size = int(len(ioi)/2)
+        path_size = int(len(ioi) / 2)
         service = 0x53
         request = pack('<BB', service, path_size)
         request += ioi
@@ -1256,65 +1148,60 @@ class PLC(object):
         request += pack('<H', count)
         request += pack('<I', self.Offset)
 
-        for v in write_data:
+        for value in write_data:
+
+            if data_type == 0xca or data_type == 0xcb:
+                value = float(value)
+            elif data_type == 0xa0:
+                value = self._make_standard_string(value)
+            elif data_type == 0xda or data_type == 0xd0:
+                value = self._make_special_string(value)
             try:
-                for i in range(len(v)):
-                    el = v[i]
+                for i in range(len(value)):
+                    el = value[i]
                     request += pack(self.CIPTypes[data_type][2], el)
             except Exception:
-                request += pack(self.CIPTypes[data_type][2], v)
+                request += pack(self.CIPTypes[data_type][2], value)
 
         return request
 
-    def _buildMultiServiceHeader(self):
+    def _build_multi_service_header(self):
         """
         Service header for making a multiple tag request
         """
-        MultiService = 0X0A
-        MultiPathSize = 0x02
-        MutliClassType = 0x20
-        MultiClassSegment = 0x02
-        MultiInstanceType = 0x24
-        MultiInstanceSegment = 0x01
+        request = self._cip_message(0x0a, 0x02, 0x01)
+        return request
 
-        return pack('<BBBBBB',
-                    MultiService,
-                    MultiPathSize,
-                    MutliClassType,
-                    MultiClassSegment,
-                    MultiInstanceType,
-                    MultiInstanceSegment)
-
-    def _buildTagListRequest(self, programName):
+    def _build_tag_list_request(self, program_name):
         """
         Build the request for the PLC tags
         Program scoped tags will pass the program name for the request
         """
-        Service = 0x55
-        PathSegment = b""
+        service = 0x55
+        path_segment = b""
 
         # If we're dealing with program scoped tags...
-        if programName:
-            PathSegment = pack('<BB', 0x91, len(programName)) + programName.encode('utf-8')
+        if program_name:
+            path_segment = pack('<BB', 0x91, len(program_name)) + program_name.encode('utf-8')
             # if odd number of characters, need to add a byte to the end.
-            if len(programName) % 2:
-                PathSegment += pack('<B', 0x00)
+            if len(program_name) % 2:
+                path_segment += pack('<B', 0x00)
 
-        PathSegment += pack('<H', 0x6B20)
+        path_segment += pack('<H', 0x6B20)
 
         if self.Offset < 256:
-            PathSegment += pack('<BB', 0x24, self.Offset)
+            path_segment += pack('<BB', 0x24, self.Offset)
         else:
-            PathSegment += pack('<HH', 0x25, self.Offset)
+            path_segment += pack('<HH', 0x25, self.Offset)
 
-        PathSegmentLen = int(len(PathSegment)/2)
-        AttributeCount = 0x03
-        SymbolType = 0x02
-        ByteCount = 0x08
-        SymbolName = 0x01
-        Attributes = pack('<HHHH', AttributeCount, SymbolName, SymbolType, ByteCount)
-        request = pack('<BB', Service, PathSegmentLen)
-        request += PathSegment + Attributes
+        path_segment_len = int(len(path_segment) / 2)
+        attribute_count = 0x03
+        symbol_type = 0x02
+        byte_count = 0x08
+        symbol_name = 0x01
+        attributes = pack('<HHHH', attribute_count, symbol_name, symbol_type, byte_count)
+        request = pack('<BB', service, path_segment_len)
+        request += path_segment + attributes
 
         return request
 
@@ -1322,41 +1209,34 @@ class PLC(object):
         """
         Gets the replies from the PLC
         In the case of BOOL arrays and bits of
-            a word, we do some reformating
+            a word, we do some reformatting
         """
         tag, base_tag, index = parse_tag_name(tag_name)
         data_type = self.KnownTags[base_tag][0]
-        bit_count = self.CIPTypes[data_type][0] * 8
 
-        # if bit of word was requested
+        # if A bit of word was requested
         if bit_of_word(tag_name):
-            split_tag = tag_name.split('.')
-            bit_pos = split_tag[len(split_tag)-1]
-            bit_pos = int(bit_pos)
-
-            word_count = get_word_count(bit_pos, elements, bit_count)
-            words = self._get_values(tag_name, word_count, data)
-            vals = self._words_to_bits(tag_name, words, count=elements)
+            words = self._get_values(tag_name, data)
+            values = self._words_to_bits(tag_name, words, count=elements)
         elif data_type == 0xd3:
-            word_count = get_word_count(index, elements, bit_count)
-            words = self._get_values(tag_name, word_count, data)
-            vals = self._words_to_bits(tag_name, words, count=elements)
+            words = self._get_values(tag_name, data)
+            values = self._words_to_bits(tag_name, words, count=elements)
         else:
-            vals = self._get_values(tag_name, elements, data)
+            values = self._get_values(tag_name, data)
 
-        return vals
+        return values
 
-    def _get_values(self, tag_name, elements, data):
+    def _get_values(self, tag_name, data):
         """
-        Gather up all the values in the reply/replies
+        Extract the values from the reply/replies
         """
         tag, base_tag, index = parse_tag_name(tag_name)
         data_type = self.KnownTags[base_tag][0]
         fmt = self.CIPTypes[data_type][2]
-        vals = []
+        values = []
 
         data_size = self.CIPTypes[data_type][0]
-        numbytes = len(data)-data_size
+        num_bytes = len(data) - data_size
         counter = 0
 
         # this is going to check if the data type was a struct
@@ -1364,43 +1244,63 @@ class PLC(object):
         if data_type == 0xa0:
             tmp = unpack_from('<h', data, 2)[0]
             if tmp != self.StringID:
-                d = data[4:4+len(data)]
-                vals.append(d)
+                d = data[4:4 + len(data)]
+                values.append(d)
                 self.Offset += len(data)
-                return vals
+                return values
 
         while True:
-            index = 2+(counter*data_size)
-            if index > numbytes:
+            index = 2 + (counter * data_size)
+            if index > num_bytes:
                 break
             if data_type == 0xa0:
-                index = 4+(counter*data_size)
+                index = 4 + (counter * data_size)
                 name_len = unpack_from('<L', data, index)[0]
-                s = data[index+4:index+4+name_len]
-                vals.append(str(s.decode(self.StringEncoding)))
+                s = data[index + 4:index + 4 + name_len]
+                values.append(str(s.decode(self.StringEncoding)))
 
-            elif data_type == 0xda:
+            elif data_type == 0xda or data_type == 0xd0:
                 # remove the data type
-                data = data[2:] 
+                data = data[2:]
                 while len(data) > 0:
-                    # get the next string length
-                    length = unpack_from('<B', data, 0)[0]
-                    # remove the length from the packet
-                    data = data[1:]
+                    
+                    if data_type == 0xd0:
+                        # special string
+                        length = unpack_from("<H", data, 0)[0]
+                        data = data[2:]
+                    else:
+                        # Micro800 String
+                        length = unpack_from("<B", data, 0)[0]
+                        data = data[1:]
+
                     # grab the string
-                    s = data[:length]
-                    vals.append(str(s.decode(self.StringEncoding)))
+                    string_value = data[:length]
+                    values.append(str(string_value.decode(self.StringEncoding)))
                     # remove the string from the packet
                     data = data[length:]
                 break
             else:
-                returnvalue = unpack_from(fmt, data, index)[0]
-                vals.append(returnvalue)
+                # handling special format for micropython for bools
+                # boolean format ? doesn't exist for upy struct module
+                if fmt == '?' and is_micropython():
+                    bool_int_val = unpack_from('B', data, index)[0]
+
+                    if bool_int_val == 255 or bool_int_val == 1:
+                        bool_val = True
+                    elif bool_int_val == 0:
+                        bool_val = False
+                    else:
+                        bool_val = None
+
+                    values.append(bool_val)
+                else:
+                    return_value = unpack_from(fmt, data, index)[0]
+                    values.append(return_value)
 
             self.Offset += data_size
             counter += 1
 
-        return vals
+        return values
 
     def _get_unknown_types(self, tags):
         """
@@ -1422,7 +1322,7 @@ class PLC(object):
         # get the unknown tags
         result = []
         while len(result) < len(unk_tags):
-            if len(result) == len(unk_tags)-1:
+            if len(result) == len(unk_tags) - 1:
                 tag = unk_tags[len(result):][0]
                 if isinstance(tag, (list, tuple)):
                     data_type = tag[1]
@@ -1435,7 +1335,7 @@ class PLC(object):
 
     def _initial_read(self, tag, base_tag, data_type):
         """
-        Store each unique tag read in a dict so that we can retreive the
+        Store each unique tag read in a dict so that we can retrieve the
         data type or data length (for STRING) later
         """
         # if a tag already exists, return True
@@ -1446,7 +1346,7 @@ class PLC(object):
             return tag, None, 0
 
         ioi = self._build_ioi(base_tag, data_type)
-        request = self._add_partial_read_service(ioi, 1)
+        request = self._add_read_service(ioi, 1)
 
         # send our tag read request
         status, ret_data = self.conn.send(request)
@@ -1471,20 +1371,20 @@ class PLC(object):
         packet_overhead = 110
         # calculate number of bytes tag name will occupy
         tag_length = len(tag) + len(tag) % 2
-        # calculate the available space (in bytes) for the write values
+        # calculate the available space (in bytes) for values to be written
         space_for_payload = self.ConnectionSize - packet_overhead - tag_length
 
         # calculate how many bytes per value are required
-        bytes_per_value  = self.CIPTypes[data_type][0]
+        bytes_per_value = self.CIPTypes[data_type][0]
         # calculate the limit for values in each request
         limit = int(space_for_payload / bytes_per_value)
         # split the list up into multiple smaller lists
         if bit_of_word(tag) or data_type == 0xd3:
-            # bools are packed into 4 byte chunks and will write
+            # booleans are packed into 4 byte chunks and will write
             # each chunk individually
             chunks = [write_values]
         else:
-            chunks = [write_values[x:x+limit] for x in range(0, len(write_values), limit)]
+            chunks = [write_values[x:x + limit] for x in range(0, len(write_values), limit)]
 
         return chunks
 
@@ -1499,16 +1399,14 @@ class PLC(object):
         if data_type == 0xd3:
             bit_pos = index % 32
         else:
-            split_tag = tag.split('.')
-            bit_pos = split_tag[len(split_tag)-1]
-            bit_pos = int(bit_pos)
+            bit_pos = int(tag.split('.')[-1])
 
         ret = []
         for v in value:
             for i in range(0, bit_count):
                 ret.append(bit_value(v, i))
 
-        return ret[bit_pos:bit_pos+count]
+        return ret[bit_pos:bit_pos + count]
 
     def _parse_multi_read(self, tags, data):
         """
@@ -1522,36 +1420,50 @@ class PLC(object):
         for i, tag in enumerate(tags):
             if isinstance(tag, (list, tuple)):
                 tag = tag[0]
-            loc = 2+(i*2)
+            loc = 2 + (i * 2)
             offset = unpack_from('<H', stripped, loc)[0]
-            status = unpack_from('<b', stripped, offset+2)[0]
-            ext_status = unpack_from('<b', stripped, offset+3)[0]
+            status = unpack_from('<b', stripped, offset + 2)[0]
+            ext_status = unpack_from('<b', stripped, offset + 3)[0]
 
             # successful reply, add the value to our list
             if status == 0 and ext_status == 0:
-                data_type = unpack_from('<B', stripped, offset+4)[0]
+                data_type = unpack_from('<B', stripped, offset + 4)[0]
                 tag_name, base_tag, index = parse_tag_name(tag)
                 self.KnownTags[base_tag] = (data_type, 0)
-                # if bit of word was requested
+                # if a bit of word was requested
                 if bit_of_word(tag):
                     type_fmt = self.CIPTypes[data_type][2]
-                    val = unpack_from(type_fmt, stripped, offset+6)[0]
+                    val = unpack_from(type_fmt, stripped, offset + 6)[0]
                     bit_state = bit_of_word_state(tag, val)
                     response = Response(tag, bit_state, status)
                 elif data_type == 0xd3:
                     type_fmt = self.CIPTypes[data_type][2]
-                    val = unpack_from(type_fmt, stripped, offset+6)[0]
+                    val = unpack_from(type_fmt, stripped, offset + 6)[0]
                     bit_state = bit_of_word_state(tag, val)
                     response = Response(tag, bit_state, status)
                 elif data_type == 0xa0:
-                    strlen = unpack_from('<B', stripped, offset+8)[0]
-                    s = stripped[offset+12:offset+12+strlen]
+                    strlen = unpack_from('<B', stripped, offset + 8)[0]
+                    s = stripped[offset + 12:offset + 12 + strlen]
                     value = str(s.decode(self.StringEncoding))
                     response = Response(tag, value, status)
                 else:
                     type_fmt = self.CIPTypes[data_type][2]
-                    value = unpack_from(type_fmt, stripped, offset+6)[0]
-                    response = Response(tag, value, status)
+                    # handling special format for micropython for bools
+                    # boolean format ? doesn't exist for upy struct module
+                    if type_fmt == '?' and is_micropython():
+                        value = unpack_from('B', stripped, offset + 6)[0]
+
+                        if value == 255 or value == 1:
+                            bool_val = True
+                        elif value == 0:
+                            bool_val = False
+                        else:
+                            bool_val = None
+
+                        response = Response(tag, bool_val, status)
+                    else:
+                        value = unpack_from(type_fmt, stripped, offset + 6)[0]
+                        response = Response(tag, value, status)
             else:
                 response = Response(tag, None, status)
             reply.append(response)
@@ -1560,64 +1472,47 @@ class PLC(object):
 
     def _parse_multi_write(self, write_data, data):
         # remove the beginning of the packet because we just don't care about it
+        self._is_not_used()
         stripped = data[50:]
         tag_count = unpack_from('<H', stripped, 0)[0]
 
         # get the offset values for each of the tags in the packet
         offsets = []
         for i in range(tag_count):
-            loc = i*2+2
+            loc = i * 2 + 2
             offsets.append(unpack_from('<H', stripped, loc)[0])
 
         reply = []
         for i, offset in enumerate(offsets):
-            loc = 2 + len(offsets)
-            status = unpack_from('<B', stripped, offset+2)[0]
-            response = Response(write_data[i][0], write_data[i][1], status)
+            status = unpack_from('<B', stripped, offset + 2)[0]
+            
+            # only return value list if the original request was multiple
+            if len(write_data[i][1]) == 1:
+                tag = write_data[i][0]
+                value = write_data[i][1][0]
+            else:
+                tag = write_data[i][0]
+                value = write_data[i][1]
+
+            response = Response(tag, value, status)
             reply.append(response)
 
         return reply
 
-    def _buildListIdentity(self):
-        """
-        Build the list identity request for discovering Ethernet I/P
-        devices on the network
-        """
-        ListService = 0x63
-        ListLength = 0x00
-        ListSessionHandle = 0x00
-        ListStatus = 0x00
-        ListResponse = 0xFA
-        ListContext1 = 0x6948
-        ListContext2 = 0x6f4d
-        ListContext3 = 0x006d
-        ListOptions = 0x00
-
-        return pack("<HHIIHHHHI",
-                    ListService,
-                    ListLength,
-                    ListSessionHandle,
-                    ListStatus,
-                    ListResponse,
-                    ListContext1,
-                    ListContext2,
-                    ListContext3,
-                    ListOptions)
-
-    def _parse_packet(self, data, programName):
+    def _parse_packet(self, data, program_name):
         # the first tag in a packet starts at byte 50
         packet_start = 50
         tag_list = []
 
         while packet_start < len(data):
             # get the length of the tag name
-            tag_len = unpack_from('<H', data, packet_start+4)[0]
+            tag_len = unpack_from('<H', data, packet_start + 4)[0]
             # get a single tag from the packet
-            packet = data[packet_start:packet_start+tag_len+20]
+            packet = data[packet_start:packet_start + tag_len + 20]
             # extract the offset
             self.Offset = unpack_from('<H', packet, 0)[0]
             # add the tag to our tag list
-            tag = Tag.parse(packet, programName)
+            tag = Tag.parse(packet, program_name)
 
             # filter out garbage
             if Tag.in_filter(tag.TagName):
@@ -1625,7 +1520,7 @@ class PLC(object):
             else:
                 tag_list.append(tag)
 
-            if not programName:
+            if not program_name:
                 if 'Program:' in tag.TagName:
                     self.ProgramNames.append(tag.TagName)
             # increment ot the next tag in the packet
@@ -1633,20 +1528,36 @@ class PLC(object):
 
         return tag_list
 
-    def _make_string(self, string):
+    def _make_standard_string(self, string):
+        """
+        String for Compact/Control Logix
+        """
         work = []
-        if self.Micro800 == True:
-            temp = pack('<B', len(string)).decode(self.StringEncoding)
-        else:
-            temp = pack('<I', len(string)).decode(self.StringEncoding)
+        string = string[:82]
+        temp = pack('<I', len(string)).decode(self.StringEncoding)
         for char in temp:
             work.append(ord(char))
         for char in string:
             work.append(ord(char))
-        if self.Micro800 == False:
-            for x in range(len(string), 84):
-                work.append(0x00)
+        for _ in range(len(string), 84):
+            work.append(0x00)
         return work
+
+    def _make_special_string(self, string):
+        """
+        String for Micro800 and other platforms
+        """
+        work = []
+        temp = pack('<B', len(string)).decode(self.StringEncoding)
+        for char in temp:
+            work.append(ord(char))
+        for char in string:
+            work.append(ord(char))
+        return work
+
+    def _is_not_used(self):
+        pass
+
 
 def bit_of_word_state(tag, value):
     """
@@ -1656,29 +1567,31 @@ def bit_of_word_state(tag, value):
     ex: (bit 4 of the number 30313 is False)
     """
     bit_pattern = r'\d+$'
-    array_pattern = r'\[([\d]|[,]|[\s])*\]$'
+    array_pattern = r'\[\s*(0|[1-9][0-9]*)(\s*,\s*(0|[1-9][0-9]*))*\s*\]$'
     try:
         index = re.search(array_pattern, tag).group(0)
         index = index[1:-1]
-    except:
+    except Exception:
         index = re.search(bit_pattern, tag).group(0)
 
     index = int(index) % 32
 
     return bit_value(value, index)
 
+
 def get_word_count(start, length, bits):
     """
     Get the number of words that the requested
     bits would occupy.  We have to take into account
     how many bits are in a word and the fact that the
-    number of requested bits can span multipe words.
+    number of requested bits can span multiple words.
     """
     new_start = start % bits
     new_end = new_start + length
 
     total_words = (new_end - 1) / bits
     return int(total_words + 1)
+
 
 def parse_tag_name(tag):
     """
@@ -1689,7 +1602,7 @@ def parse_tag_name(tag):
     MyTag.Name[42], MyTag.Name, 42
     """
     bit_end_pattern = r'\.\d+$'
-    array_pattern = r'\[([\d]|[,]|[\s])*\]$'
+    array_pattern = r'\[\s*(0|[1-9][0-9]*)(\s*,\s*(0|[1-9][0-9]*))*\s*\]$'
 
     # get the array index
     try:
@@ -1700,7 +1613,7 @@ def parse_tag_name(tag):
             index = list(map(int, index))
         else:
             index = int(index)
-    except:
+    except Exception:
         index = 0
 
     # get the base tag name
@@ -1709,12 +1622,13 @@ def parse_tag_name(tag):
 
     return tag, base_tag, index
 
+
 def bin_to_int(bits, bpw):
     """
     Convert a list of bits to an integer
     """
-    sign_limit = 2**(bpw-1)-1
-    conv = (2**bpw)
+    sign_limit = 2 ** (bpw - 1) - 1
+    conv = (2 ** bpw)
 
     value = 0
     for bit in reversed(bits):
@@ -1724,6 +1638,7 @@ def bin_to_int(bits, bpw):
         value -= conv
 
     return value
+
 
 def mod_write_masks(tag, values, bpw):
     """
@@ -1735,12 +1650,12 @@ def mod_write_masks(tag, values, bpw):
     convert them to values.
     """
     bit_pattern = r'\.\d+$'
-    array_pattern = r'\[([\d]|[,]|[\s])*\]$'
+    array_pattern = r'\[\s*(0|[1-9][0-9]*)(\s*,\s*(0|[1-9][0-9]*))*\s*\]$'
 
     try:
-        # bit of a word
+        # A bit of a word
         index = int(re.search(bit_pattern, tag).group(0)[1:])
-    except:
+    except Exception:
         # boolean arrays
         index = re.search(array_pattern, tag).group(0)
         index = int(index[1:-1])
@@ -1748,34 +1663,34 @@ def mod_write_masks(tag, values, bpw):
     # figure out how many words our bits will occupy
     start_bit = index % bpw
     bit_count = len(values)
-    end_bit = start_bit + bit_count - 1
     word_count = ((start_bit % bpw) + bit_count) / bpw
     word_count = int(math.ceil(word_count))
 
     # create template high/low mask lists.
-    mask_high = [0 for i in range(word_count*bpw)]
-    mask_low = [1 for i in range(word_count*bpw)]
+    mask_high = [0 for _ in range(word_count * bpw)]
+    mask_low = [1 for _ in range(word_count * bpw)]
 
     # map our values onto our masks
-    mask_high[start_bit:start_bit+len(values)] = values
-    mask_low[start_bit:start_bit+len(values)] = values
+    mask_high[start_bit:start_bit + len(values)] = values
+    mask_low[start_bit:start_bit + len(values)] = values
 
     # split up our lists into chunks of n bytes
-    segs_high = [mask_high[x:x+bpw] for x in range(0, len(mask_high), bpw)]
-    segs_low = [mask_low[x:x+bpw] for x in range(0, len(mask_low), bpw)]
+    segments_high = [mask_high[x:x + bpw] for x in range(0, len(mask_high), bpw)]
+    segments_low = [mask_low[x:x + bpw] for x in range(0, len(mask_low), bpw)]
 
     # convert our finalized lists of masks to values to be written
-    vals_high = [bin_to_int(seg, bpw) for seg in segs_high]
-    vals_low = [bin_to_int(seg, bpw) for seg in segs_low]
+    values_high = [bin_to_int(seg, bpw) for seg in segments_high]
+    values_low = [bin_to_int(seg, bpw) for seg in segments_low]
 
     tags = [tag]
-    for i in range(word_count-1):
+    for _ in range(word_count - 1):
         index += bpw
         new_index = "[{}]".format(index)
         new_tag = re.sub(array_pattern, new_index, tag)
         tags.append(new_tag)
 
-    return vals_high, vals_low, tags
+    return values_high, values_low, tags
+
 
 def bit_of_word(tag):
     """
@@ -1783,17 +1698,18 @@ def bit_of_word(tag):
     ex. Tag.1 returns True (Tag = DINT)
     """
     s = tag.split('.')
-    if s[len(s)-1].isdigit():
+    if s[len(s) - 1].isdigit():
         return True
     else:
         return False
 
-def bit_value(value, bitno):
+
+def bit_value(value, bit_no):
     """
     Returns the specific bit of a words value
     """
-    mask = 1 << bitno
-    if (value & mask):
+    mask = 1 << bit_no
+    if value & mask:
         return True
     else:
         return False

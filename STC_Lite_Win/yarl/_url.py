@@ -1,18 +1,15 @@
 import functools
-import sys
+import math
 import warnings
 from collections.abc import Mapping, Sequence
+from contextlib import suppress
 from ipaddress import ip_address
-from urllib.parse import SplitResult, parse_qsl, urljoin, urlsplit, urlunsplit, quote
+from urllib.parse import SplitResult, parse_qsl, quote, urljoin, urlsplit, urlunsplit
 
-from multidict import MultiDict, MultiDictProxy
 import idna
-
-import math
-
+from multidict import MultiDict, MultiDictProxy
 
 from ._quoting import _Quoter, _Unquoter
-
 
 DEFAULT_PORTS = {"http": 80, "https": 443, "ws": 80, "wss": 443}
 
@@ -53,6 +50,30 @@ class cached_property:
 
     def __set__(self, inst, value):
         raise AttributeError("cached property is read-only")
+
+
+def _normalize_path_segments(segments):
+    """Drop '.' and '..' from a sequence of str segments"""
+
+    resolved_path = []
+
+    for seg in segments:
+        if seg == "..":
+            # ignore any .. segments that would otherwise cause an
+            # IndexError when popped from resolved_path if
+            # resolving for rfc3986
+            with suppress(IndexError):
+                resolved_path.pop()
+        elif seg != ".":
+            resolved_path.append(seg)
+
+    if segments and segments[-1] in (".", ".."):
+        # do some post-processing here.
+        # if the last segment was a relative dir,
+        # then we need to append the trailing '/'
+        resolved_path.append("")
+
+    return resolved_path
 
 
 @rewrite_module
@@ -204,7 +225,7 @@ class URL:
         query=None,
         query_string="",
         fragment="",
-        encoded=False
+        encoded=False,
     ):
         """Creates and returns a new URL"""
 
@@ -212,6 +233,8 @@ class URL:
             raise ValueError(
                 'Can\'t mix "authority" with "user", "password", "host" or "port".'
             )
+        if not isinstance(port, (int, type(None))):
+            raise TypeError("The port is required to be int.")
         if port and not host:
             raise ValueError('Can\'t build URL with "port" but without "host".')
         if query and query_string:
@@ -219,12 +242,13 @@ class URL:
         if (
             scheme is None
             or authority is None
+            or host is None
             or path is None
             or query_string is None
             or fragment is None
         ):
             raise TypeError(
-                'NoneType is illegal for "scheme", "authority", "path", '
+                'NoneType is illegal for "scheme", "authority", "host", "path", '
                 '"query_string", and "fragment" args, use empty string instead.'
             )
 
@@ -261,7 +285,7 @@ class URL:
             return url
 
     def __init_subclass__(cls):
-        raise TypeError("Inheriting a class {!r} from URL is forbidden".format(cls))
+        raise TypeError(f"Inheriting a class {cls!r} from URL is forbidden")
 
     def __str__(self):
         val = self._val
@@ -270,7 +294,7 @@ class URL:
         return urlunsplit(val)
 
     def __repr__(self):
-        return "{}('{}')".format(self.__class__.__name__, str(self))
+        return f"{self.__class__.__name__}('{str(self)}')"
 
     def __bytes__(self):
         return str(self).encode("ascii")
@@ -319,25 +343,9 @@ class URL:
         return self._val > other._val
 
     def __truediv__(self, name):
-        name = self._PATH_QUOTER(name)
-        if name.startswith("/"):
-            raise ValueError(
-                "Appending path {!r} starting from slash is forbidden".format(name)
-            )
-        path = self._val.path
-        if path == "/":
-            new_path = "/" + name
-        elif not path and not self.is_absolute():
-            new_path = name
-        else:
-            parts = path.rstrip("/").split("/")
-            parts.append(name)
-            new_path = "/".join(parts)
-        if self.is_absolute():
-            new_path = self._normalize_path(new_path)
-        return URL(
-            self._val._replace(path=new_path, query="", fragment=""), encoded=True
-        )
+        if not isinstance(name, str):
+            return NotImplemented
+        return self._make_child((str(name),))
 
     def __mod__(self, query):
         return self.update_query(query)
@@ -501,7 +509,7 @@ class URL:
             return None
         if "%" in raw:
             # Hack for scoped IPv6 addresses like
-            # fe80::2%Проверка
+            # fe80::2%Перевірка
             # presence of '%' sign means only IPv6 address, so idna is useless.
             return raw
         return _idna_decode(raw)
@@ -580,14 +588,14 @@ class URL:
         """Decoded path of URL with query."""
         if not self.query_string:
             return self.path
-        return "{}?{}".format(self.path, self.query_string)
+        return f"{self.path}?{self.query_string}"
 
     @cached_property
     def raw_path_qs(self):
         """Encoded path of URL with query."""
         if not self.raw_query_string:
             return self.raw_path
-        return "{}?{}".format(self.raw_path, self.raw_query_string)
+        return f"{self.raw_path}?{self.raw_query_string}"
 
     @property
     def raw_fragment(self):
@@ -669,6 +677,31 @@ class URL:
         """The last part of parts."""
         return self._UNQUOTER(self.raw_name)
 
+    @cached_property
+    def raw_suffix(self):
+        name = self.raw_name
+        i = name.rfind(".")
+        if 0 < i < len(name) - 1:
+            return name[i:]
+        else:
+            return ""
+
+    @cached_property
+    def suffix(self):
+        return self._UNQUOTER(self.raw_suffix)
+
+    @cached_property
+    def raw_suffixes(self):
+        name = self.raw_name
+        if name.endswith("."):
+            return ()
+        name = name.lstrip(".")
+        return tuple("." + suffix for suffix in name.split(".")[1:])
+
+    @cached_property
+    def suffixes(self):
+        return tuple(self._UNQUOTER(suffix) for suffix in self.raw_suffixes)
+
     @staticmethod
     def _validate_authority_uri_abs_path(host, path):
         """Ensure that path in URL with authority starts with a leading slash.
@@ -680,84 +713,74 @@ class URL:
                 "Path in a URL with authority should start with a slash ('/') if set"
             )
 
+    def _make_child(self, segments, encoded=False):
+        """add segments to self._val.path, accounting for absolute vs relative paths"""
+        # keep the trailing slash if the last segment ends with /
+        parsed = [""] if segments and segments[-1][-1:] == "/" else []
+        for seg in reversed(segments):
+            if not seg:
+                continue
+            if seg[0] == "/":
+                raise ValueError(
+                    f"Appending path {seg!r} starting from slash is forbidden"
+                )
+            seg = seg if encoded else self._PATH_QUOTER(seg)
+            if "/" in seg:
+                parsed += (
+                    sub for sub in reversed(seg.split("/")) if sub and sub != "."
+                )
+            elif seg != ".":
+                parsed.append(seg)
+        parsed.reverse()
+        old_path = self._val.path
+        if old_path:
+            parsed = [*old_path.rstrip("/").split("/"), *parsed]
+        if self.is_absolute():
+            parsed = _normalize_path_segments(parsed)
+            if parsed and parsed[0] != "":
+                # inject a leading slash when adding a path to an absolute URL
+                # where there was none before
+                parsed = ["", *parsed]
+        new_path = "/".join(parsed)
+        return URL(
+            self._val._replace(path=new_path, query="", fragment=""), encoded=True
+        )
+
     @classmethod
     def _normalize_path(cls, path):
-        # Drop '.' and '..' from path
+        # Drop '.' and '..' from str path
+
+        prefix = ""
+        if path.startswith("/"):
+            # preserve the "/" root element of absolute paths, copying it to the
+            # normalised output as per sections 5.2.4 and 6.2.2.3 of rfc3986.
+            prefix = "/"
+            path = path[1:]
 
         segments = path.split("/")
-        resolved_path = []
+        return prefix + "/".join(_normalize_path_segments(segments))
 
-        for seg in segments:
-            if seg == "..":
-                try:
-                    resolved_path.pop()
-                except IndexError:
-                    # ignore any .. segments that would otherwise cause an
-                    # IndexError when popped from resolved_path if
-                    # resolving for rfc3986
-                    pass
-            elif seg == ".":
-                continue
-            else:
-                resolved_path.append(seg)
-
-        if segments[-1] in (".", ".."):
-            # do some post-processing here.
-            # if the last segment was a relative dir,
-            # then we need to append the trailing '/'
-            resolved_path.append("")
-
-        return "/".join(resolved_path)
-
-    if sys.version_info >= (3, 7):
-
-        @classmethod
-        def _encode_host(cls, host, human=False):
-            try:
-                ip, sep, zone = host.partition("%")
-                ip = ip_address(ip)
-            except ValueError:
-                host = host.lower()
-                # IDNA encoding is slow,
-                # skip it for ASCII-only strings
-                # Don't move the check into _idna_encode() helper
-                # to reduce the cache size
-                if human or host.isascii():
-                    return host
-                host = _idna_encode(host)
-            else:
-                host = ip.compressed
-                if sep:
-                    host += "%" + zone
-                if ip.version == 6:
-                    host = "[" + host + "]"
-            return host
-
-    else:
-        # work around for missing str.isascii() in Python <= 3.6
-        @classmethod
-        def _encode_host(cls, host, human=False):
-            try:
-                ip, sep, zone = host.partition("%")
-                ip = ip_address(ip)
-            except ValueError:
-                host = host.lower()
-                if human:
-                    return host
-
-                for char in host:
-                    if char > "\x7f":
-                        break
-                else:
-                    return host
-                host = _idna_encode(host)
-            else:
-                host = ip.compressed
-                if sep:
-                    host += "%" + zone
-                if ip.version == 6:
-                    host = "[" + host + "]"
-            return host
+    @classmethod
+    def _encode_host(cls, host, human=False):
+        try:
+            ip, sep, zone = host.partition("%")
+            ip = ip_address(ip)
+        except ValueError:
+            host = host.lower()
+            # IDNA encoding is slow,
+            # skip it for ASCII-only strings
+            # Don't move the check into _idna_encode() helper
+            # to reduce the cache size
+            if human or host.isascii():
+                return host
+            host = _idna_encode(host)
+        else:
+            host = ip.compressed
+            if sep:
+                host += "%" + zone
+            if ip.version == 6:
+                host = "[" + host + "]"
+        return host
 
     @classmethod
     def _make_netloc(
@@ -768,7 +791,7 @@ class URL:
             ret = cls._encode_host(host)
         else:
             ret = host
-        if port:
+        if port is not None:
             ret = ret + ":" + str(port)
         if password is not None:
             if not user:
@@ -876,8 +899,11 @@ class URL:
 
         """
         # N.B. doesn't cleanup query/fragment
-        if port is not None and not isinstance(port, int):
-            raise TypeError("port should be int or None, got {}".format(type(port)))
+        if port is not None:
+            if isinstance(port, bool) or not isinstance(port, int):
+                raise TypeError(f"port should be int or None, got {type(port)}")
+            if port < 0 or port > 65535:
+                raise ValueError(f"port must be between 0 and 65535, got {port}")
         if not self.is_absolute():
             raise ValueError("port replacement is not allowed for relative URLs")
         val = self._val
@@ -939,7 +965,7 @@ class URL:
             raise ValueError("Either kwargs or single query parameter must be present")
 
         if query is None:
-            query = ""
+            query = None
         elif isinstance(query, Mapping):
             quoter = self._QUERY_PART_QUOTER
             query = "&".join(self._query_seq_pairs(quoter, query.items()))
@@ -981,7 +1007,7 @@ class URL:
         """
         # N.B. doesn't cleanup query/fragment
 
-        new_query = self._get_str_query(*args, **kwargs)
+        new_query = self._get_str_query(*args, **kwargs) or ""
         return URL(
             self._val._replace(path=self._val.path, query=new_query), encoded=True
         )
@@ -989,11 +1015,15 @@ class URL:
     def update_query(self, *args, **kwargs):
         """Return a new URL with query part updated."""
         s = self._get_str_query(*args, **kwargs)
-        new_query = MultiDict(parse_qsl(s, keep_blank_values=True))
-        query = MultiDict(self.query)
-        query.update(new_query)
+        query = None
+        if s is not None:
+            new_query = MultiDict(parse_qsl(s, keep_blank_values=True))
+            query = MultiDict(self.query)
+            query.update(new_query)
 
-        return URL(self._val._replace(query=self._get_str_query(query)), encoded=True)
+        return URL(
+            self._val._replace(query=self._get_str_query(query) or ""), encoded=True
+        )
 
     def with_fragment(self, fragment):
         """Return a new URL with fragment replaced.
@@ -1046,6 +1076,27 @@ class URL:
             encoded=True,
         )
 
+    def with_suffix(self, suffix):
+        """Return a new URL with suffix (file extension of name) replaced.
+
+        Query and fragment parts are cleaned up.
+
+        suffix is encoded if needed.
+        """
+        if not isinstance(suffix, str):
+            raise TypeError("Invalid suffix type")
+        if suffix and not suffix.startswith(".") or suffix == ".":
+            raise ValueError(f"Invalid suffix {suffix!r}")
+        name = self.raw_name
+        if not name:
+            raise ValueError(f"{self!r} has an empty name")
+        old_suffix = self.raw_suffix
+        if not old_suffix:
+            name = name + suffix
+        else:
+            name = name[: -len(old_suffix)] + suffix
+        return self.with_name(name)
+
     def join(self, url):
         """Join URLs
 
@@ -1063,10 +1114,14 @@ class URL:
             raise TypeError("url should be URL")
         return URL(urljoin(str(self), str(url)), encoded=True)
 
+    def joinpath(self, *other, encoded=False):
+        """Return a new URL with the elements in other appended to the path."""
+        return self._make_child(other, encoded=encoded)
+
     def human_repr(self):
         """Return decoded human readable string for URL representation."""
-        user = _human_quote(self.user, "#/:?@")
-        password = _human_quote(self.password, "#/:?@")
+        user = _human_quote(self.user, "#/:?@[]")
+        password = _human_quote(self.password, "#/:?@[]")
         host = self.host
         if host:
             host = self._encode_host(self.host, human=True)
@@ -1098,7 +1153,7 @@ def _human_quote(s, unsafe):
         return s
     for c in "%" + unsafe:
         if c in s:
-            s = s.replace(c, "%{:02X}".format(ord(c)))
+            s = s.replace(c, f"%{ord(c):02X}")
     if s.isprintable():
         return s
     return "".join(c if c.isprintable() else quote(c) for c in s)

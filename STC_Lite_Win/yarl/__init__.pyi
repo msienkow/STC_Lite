@@ -1,12 +1,13 @@
-from typing import overload, Any, Tuple, Optional, Mapping, Union, Sequence, Type
-import multidict
-from functools import _CacheInfo
 import sys
+from functools import _CacheInfo
+from typing import Any, Mapping, Optional, Sequence, Tuple, Type, Union, overload
+
+import multidict
 
 if sys.version_info >= (3, 8):
-    from typing import TypedDict, Final, final
+    from typing import Final, TypedDict, final
 else:
-    from typing_extensions import TypedDict, Final, final
+    from typing_extensions import Final, TypedDict, final
 
 _SimpleQuery = Union[str, int, float]
 _QueryVariable = Union[_SimpleQuery, Sequence[_SimpleQuery]]
@@ -24,6 +25,7 @@ class URL:
     raw_host: Final[Optional[str]]
     host: Final[Optional[str]]
     port: Final[Optional[int]]
+    explicit_port: Final[Optional[int]]
     raw_authority: Final[str]
     authority: Final[str]
     raw_path: Final[str]
@@ -37,6 +39,10 @@ class URL:
     query: Final[multidict.MultiDict[str]]
     raw_name: Final[str]
     name: Final[str]
+    raw_suffix: Final[str]
+    suffix: Final[str]
+    raw_suffixes: Final[Tuple[str, ...]]
+    suffixes: Final[Tuple[str, ...]]
     raw_parts: Final[Tuple[str, ...]]
     parts: Final[Tuple[str, ...]]
     parent: Final[URL]
@@ -61,6 +67,7 @@ class URL:
     ) -> URL: ...
     def __str__(self) -> str: ...
     def __repr__(self) -> str: ...
+    def __bytes__(self) -> bytes: ...
     def __eq__(self, other: Any) -> bool: ...
     def __le__(self, other: Any) -> bool: ...
     def __lt__(self, other: Any) -> bool: ...
@@ -89,7 +96,9 @@ class URL:
     def update_query(self, **kwargs: _QueryVariable) -> URL: ...
     def with_fragment(self, fragment: Optional[str]) -> URL: ...
     def with_name(self, name: str) -> URL: ...
+    def with_suffix(self, suffix: str) -> URL: ...
     def join(self, url: URL) -> URL: ...
+    def joinpath(self, *url: str, encoded: bool = ...) -> URL: ...
     def human_repr(self) -> str: ...
     # private API
     @classmethod

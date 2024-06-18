@@ -3,8 +3,8 @@ Description=SaniTrend Cloud Lite
 After=network.target
 
 [Service]
-ExecStart=/usr/bin/python3 /home/sanimatic/STC_Lite/stc.py
-WorkingDirectory=/home/sanimatic/STC_Lite/
+ExecStart=/home/sanimatic/STC_Lite/stc/bin/python3 /home/sanimatic/STC_Lite/stc/stc.py
+WorkingDirectory=/home/sanimatic/STC_Lite/stc
 StandardOutput=inherit
 StandardError=inherit
 Restart=always

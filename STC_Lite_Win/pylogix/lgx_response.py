@@ -16,6 +16,9 @@
 
 import sys
 
+from pylogix.utils import is_python3, is_micropython, is_python2
+
+
 class Response(object):
 
     def __init__(self, tag_name, value, status):
@@ -40,10 +43,10 @@ class Response(object):
         # hack to check if status string for both py2 and py3
         # because of nesting Response.Status to another Response obj constr
         # some Success results are shown as 'Unknown error Success'
-        if sys.version_info.major == 3:
+        if is_python3() or is_micropython():
             if isinstance(status, str):
                 return status
-        if sys.version_info.major == 2:
+        elif is_python2():
             if isinstance(status, basestring):
                 return status
 
@@ -52,6 +55,7 @@ class Response(object):
         else:
             err = 'Unknown error {}'.format(status)
         return err
+
 
 cip_error_codes = {0x00: 'Success',
                    0x01: 'Connection failure',
@@ -71,7 +75,7 @@ cip_error_codes = {0x00: 'Success',
                    0x0F: 'Privilege violation',
                    0x10: 'Device state conflict',
                    0x11: 'Reply data too large',
-                   0x12: 'Fragmentation of a premitive value',
+                   0x12: 'Fragmentation of a primitive value',
                    0x13: 'Not enough data',
                    0x14: 'Attribute not supported',
                    0x15: 'Too much data',
